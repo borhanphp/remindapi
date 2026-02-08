@@ -8,7 +8,7 @@ const User = require('../models/User');
 exports.getSubscriptionStatus = async (organizationId) => {
     try {
         const organization = await Organization.findById(organizationId);
-        
+
         if (!organization) {
             return null;
         }
@@ -37,7 +37,7 @@ exports.getSubscriptionStatus = async (organizationId) => {
 exports.hasFeature = async (organizationId, featureName) => {
     try {
         const organization = await Organization.findById(organizationId);
-        
+
         if (!organization) {
             return false;
         }
@@ -55,7 +55,7 @@ exports.hasFeature = async (organizationId, featureName) => {
 exports.getRemainingInvoices = async (organizationId) => {
     try {
         const organization = await Organization.findById(organizationId);
-        
+
         if (!organization) {
             return 0;
         }
@@ -66,7 +66,7 @@ exports.getRemainingInvoices = async (organizationId) => {
         }
 
         const maxInvoices = organization.features.maxInvoices || 5;
-        
+
         // Count invoices for current month
         const Invoice = require('../models/Invoice');
         const startOfMonth = new Date();
@@ -86,45 +86,48 @@ exports.getRemainingInvoices = async (organizationId) => {
 };
 
 /**
- * Get invoice usage for current month
+ * Get invoice usage - lifetime count for free plan, monthly for display purposes on Pro
  */
 exports.getInvoiceUsage = async (organizationId) => {
     try {
         const organization = await Organization.findById(organizationId);
-        
+
         if (!organization) {
-            return { used: 0, limit: 0, unlimited: false };
+            return { used: 0, limit: 0, unlimited: false, remaining: 0 };
         }
+
+        // Use InvoiceReminder model (the actual invoice model in this app)
+        const InvoiceReminder = require('../models/InvoiceReminder');
+
+        // Get all users in this organization
+        const User = require('../models/User');
+        const orgUsers = await User.find({ organization: organizationId }).select('_id');
+        const userIds = orgUsers.map(u => u._id);
 
         // Pro plan has unlimited invoices
         if (organization.subscription.plan === 'pro') {
-            const Invoice = require('../models/Invoice');
             const startOfMonth = new Date();
             startOfMonth.setDate(1);
             startOfMonth.setHours(0, 0, 0, 0);
 
-            const invoiceCount = await Invoice.countDocuments({
-                organization: organizationId,
+            const invoiceCount = await InvoiceReminder.countDocuments({
+                userId: { $in: userIds },
                 createdAt: { $gte: startOfMonth }
             });
 
             return {
                 used: invoiceCount,
                 limit: -1,
-                unlimited: true
+                unlimited: true,
+                remaining: -1
             };
         }
 
+        // Free plan: count ALL invoices (lifetime limit)
         const maxInvoices = organization.features.maxInvoices || 5;
-        
-        const Invoice = require('../models/Invoice');
-        const startOfMonth = new Date();
-        startOfMonth.setDate(1);
-        startOfMonth.setHours(0, 0, 0, 0);
 
-        const invoiceCount = await Invoice.countDocuments({
-            organization: organizationId,
-            createdAt: { $gte: startOfMonth }
+        const invoiceCount = await InvoiceReminder.countDocuments({
+            userId: { $in: userIds }
         });
 
         return {
@@ -135,7 +138,7 @@ exports.getInvoiceUsage = async (organizationId) => {
         };
     } catch (error) {
         console.error('Get invoice usage error:', error);
-        return { used: 0, limit: 0, unlimited: false };
+        return { used: 0, limit: 5, unlimited: false, remaining: 5 };
     }
 };
 
@@ -145,7 +148,7 @@ exports.getInvoiceUsage = async (organizationId) => {
 exports.isTrialExpired = async (organizationId) => {
     try {
         const organization = await Organization.findById(organizationId);
-        
+
         if (!organization) {
             return false;
         }
@@ -171,7 +174,7 @@ exports.isTrialExpired = async (organizationId) => {
 exports.getTrialDaysRemaining = async (organizationId) => {
     try {
         const organization = await Organization.findById(organizationId);
-        
+
         if (!organization || organization.subscription.status !== 'trial') {
             return 0;
         }
@@ -197,7 +200,7 @@ exports.getTrialDaysRemaining = async (organizationId) => {
 exports.upgradeToProPlan = async (organizationId, paddleData) => {
     try {
         const organization = await Organization.findById(organizationId);
-        
+
         if (!organization) {
             throw new Error('Organization not found');
         }
@@ -241,7 +244,7 @@ exports.upgradeToProPlan = async (organizationId, paddleData) => {
 exports.downgradeToFreePlan = async (organizationId) => {
     try {
         const organization = await Organization.findById(organizationId);
-        
+
         if (!organization) {
             throw new Error('Organization not found');
         }
@@ -290,13 +293,13 @@ exports.getPlanComparison = () => {
 exports.shouldUpgrade = async (organizationId) => {
     try {
         const organization = await Organization.findById(organizationId);
-        
+
         if (!organization || organization.subscription.plan === 'pro') {
             return { shouldUpgrade: false };
         }
 
         const usage = await exports.getInvoiceUsage(organizationId);
-        
+
         // Suggest upgrade if user is at 80% of limit
         const usagePercentage = (usage.used / usage.limit) * 100;
 

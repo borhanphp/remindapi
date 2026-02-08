@@ -128,11 +128,56 @@ const apiRateLimit = rateLimit({
   message: 'Too many requests. Please slow down.'
 });
 
+/**
+ * Rate limiter for invoice creation
+ * Prevents abuse of invoice creation
+ * 10 invoices per hour per user
+ */
+const invoiceCreateRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  message: 'Too many invoices created. Please try again later.',
+  keyGenerator: (req) => {
+    // Rate limit by user ID
+    const userId = req.user?._id || 'unknown';
+    return `invoice-create:${userId}`;
+  }
+});
+
+/**
+ * Rate limiter for sending reminders
+ * Prevents email spam abuse
+ * 20 reminders per hour per user
+ */
+const reminderRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20,
+  message: 'Too many reminders sent. Please try again later.',
+  keyGenerator: (req) => {
+    const userId = req.user?._id || 'unknown';
+    return `reminder:${userId}`;
+  }
+});
+
+/**
+ * Rate limiter for general invoice API operations
+ * 60 requests per minute
+ */
+const invoiceApiRateLimit = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 60,
+  message: 'Too many invoice requests. Please slow down.'
+});
+
 module.exports = {
   rateLimit,
   loginRateLimit,
   passwordResetRateLimit,
   registrationRateLimit,
   verificationRateLimit,
-  apiRateLimit
+  apiRateLimit,
+  invoiceCreateRateLimit,
+  reminderRateLimit,
+  invoiceApiRateLimit
 };
+

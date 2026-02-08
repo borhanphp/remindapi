@@ -1,4 +1,3 @@
-const { cleanupExpiredReservations } = require('./realTimeInventory');
 const { Task, TaskAutomation, User } = require('../models');
 const { sendEmail } = require('./notify');
 const { isModuleEnabled } = require('../config/modules');
@@ -8,29 +7,11 @@ const subscriptionEmailService = require('../services/subscriptionEmailService')
 const { getInvoiceUsage } = require('./subscriptionHelpers');
 
 
-
-// Run cleanup every minute
-const CLEANUP_INTERVAL = 60 * 1000; // 1 minute
-
 /**
  * Start the scheduled tasks
  */
 function startScheduledTasks() {
   console.log('[Scheduled Tasks] Starting all scheduled tasks...');
-
- 
-
-  // Start stock reservation expiry job (runs every hour)
-  console.log('[Scheduled Tasks] Starting stock reservation expiry job...');
-
-  // Schedule cleanup of expired reservations (legacy - runs every minute)
-  setInterval(async () => {
-    try {
-      await cleanupExpiredReservations();
-    } catch (error) {
-      console.error('Error cleaning up expired reservations:', error);
-    }
-  }, CLEANUP_INTERVAL);
 
   // Invoice Reminder Check (Hourly)
   setInterval(async () => {
@@ -69,8 +50,14 @@ function startScheduledTasks() {
   }, 24 * 60 * 60 * 1000); // Run daily
 
   // Simple task reminders and recurrences, every 5 minutes
+  // Skip if Task/TaskAutomation models are not available (single-purpose apps)
   setInterval(async () => {
     try {
+      // Check if Task model exists and has data
+      if (!Task || typeof Task.find !== 'function') {
+        return; // Skip project automation for single-purpose apps
+      }
+
       const now = new Date();
       const soon = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // 48h
 
@@ -92,20 +79,22 @@ function startScheduledTasks() {
       }
 
       // Rule-based auto-assignment (very simple evaluator)
-      const activeRules = await (TaskAutomation.find ? TaskAutomation.find({ isActive: true, 'trigger.type': 'rule' }) : []);
-      if (activeRules && activeRules.length) {
-        for (const rule of activeRules) {
-          const match = rule.trigger?.config?.match || 'all';
-          const conditions = Array.isArray(rule.trigger?.config?.if) ? rule.trigger.config.if : [];
-          const candidates = await Task.find({ organization: rule.organization, project: rule.project });
-          for (const t of candidates) {
-            const ok = conditions.length === 0 || (match === 'all'
-              ? conditions.every(c => evalCond(t, c))
-              : conditions.some(c => evalCond(t, c))
-            );
-            if (!ok) continue;
-            if (rule.action?.type === 'assign' && rule.action?.config?.assigneeId && String(t.assigneeId || '') !== String(rule.action.config.assigneeId)) {
-              await Task.updateOne({ _id: t._id }, { $set: { assigneeId: rule.action.config.assigneeId } });
+      if (TaskAutomation && typeof TaskAutomation.find === 'function') {
+        const activeRules = await TaskAutomation.find({ isActive: true, 'trigger.type': 'rule' });
+        if (activeRules && activeRules.length) {
+          for (const rule of activeRules) {
+            const match = rule.trigger?.config?.match || 'all';
+            const conditions = Array.isArray(rule.trigger?.config?.if) ? rule.trigger.config.if : [];
+            const candidates = await Task.find({ organization: rule.organization, project: rule.project });
+            for (const t of candidates) {
+              const ok = conditions.length === 0 || (match === 'all'
+                ? conditions.every(c => evalCond(t, c))
+                : conditions.some(c => evalCond(t, c))
+              );
+              if (!ok) continue;
+              if (rule.action?.type === 'assign' && rule.action?.config?.assigneeId && String(t.assigneeId || '') !== String(rule.action.config.assigneeId)) {
+                await Task.updateOne({ _id: t._id }, { $set: { assigneeId: rule.action.config.assigneeId } });
+              }
             }
           }
         }
@@ -139,7 +128,10 @@ function startScheduledTasks() {
         await t.save();
       }
     } catch (err) {
-      console.error('Project automations failed:', err?.message);
+      // Only log if it's not a model-not-found error
+      if (!err?.message?.includes('find')) {
+        console.error('Project automations failed:', err?.message);
+      }
     }
   }, 5 * 60 * 1000);
 }
@@ -210,15 +202,15 @@ async function checkTrialExpirations() {
       // Trial has expired
       if (daysRemaining <= 0 && org.subscription.status === 'trial') {
         console.log(`[Trial Check] Trial expired for organization ${org.name}, downgrading to free`);
-        
+
         // Update organization
         org.subscription.status = 'expired';
         org.subscription.plan = 'free';
-        
+
         // Update features to free plan
         const Subscription = require('../models/Subscription');
         org.features = Subscription.plans.free.features;
-        
+
         await org.save();
 
         // Update all users in organization
@@ -262,7 +254,7 @@ async function checkUsageLimits() {
       // Send warning at 80% usage (4 out of 5 invoices)
       if (usage.used >= Math.floor(usage.limit * 0.8) && usage.remaining > 0) {
         const owner = await User.findOne({ organization: org._id, isOwner: true });
-        
+
         if (owner) {
           console.log(`[Usage Check] Sending usage warning to ${owner.email} (${usage.used}/${usage.limit})`);
           await subscriptionEmailService.sendUsageLimitWarningEmail(owner, org, usage);

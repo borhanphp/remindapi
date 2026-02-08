@@ -11,10 +11,20 @@ const {
     getInvoiceLogs,
     getInvoice
 } = require('../controllers/InvoiceReminderController');
-const { protect } = require('../middleware/auth'); // Assuming named export 'protect'
+const { protect } = require('../middleware/auth');
+const {
+    invoiceApiRateLimit,
+    invoiceCreateRateLimit,
+    reminderRateLimit
+} = require('../middleware/rateLimit');
+const { sanitizeBody } = require('../utils/sanitize');
+
+// Apply general rate limiting and input sanitization to all invoice routes
+router.use(invoiceApiRateLimit);
+router.use(sanitizeBody({ emailFields: ['clientEmail', 'email'] }));
 
 router.route('/invoices')
-    .post(protect, createInvoice)
+    .post(protect, invoiceCreateRateLimit, createInvoice)
     .get(protect, getInvoices);
 
 router.route('/invoices/:id')
@@ -29,9 +39,10 @@ router.route('/invoices/:id/pay')
     .put(protect, markAsPaid);
 
 router.route('/invoices/:id/remind')
-    .post(protect, sendManualReminder);
+    .post(protect, reminderRateLimit, sendManualReminder);
 
 router.route('/stats')
     .get(protect, getDashboardStats);
 
 module.exports = router;
+

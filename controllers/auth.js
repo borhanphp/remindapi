@@ -69,8 +69,8 @@ exports.register = async (req, res) => {
       approvalStatus: 'approved', // Auto-approve for SaaS
       subscription: {
         plan: 'free',
-        status: 'trial',
-        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+        status: 'active',
+        // trialEndsAt: removed (no trial)
       }
     });
 

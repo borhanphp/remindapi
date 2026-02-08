@@ -4,10 +4,10 @@ const User = require('../models/User');
 const {
     getSubscriptionStatus,
     getInvoiceUsage,
-    getTrialDaysRemaining,
     getPlanComparison,
     shouldUpgrade
 } = require('../utils/subscriptionHelpers');
+
 
 /**
  * @desc    Get current subscription status and usage
@@ -32,16 +32,6 @@ exports.getStatus = async (req, res) => {
         // Get usage stats
         const usage = await getInvoiceUsage(req.user.organization);
 
-        // Get trial info if applicable
-        let trialInfo = null;
-        if (organization.subscription.status === 'trial') {
-            const daysRemaining = await getTrialDaysRemaining(req.user.organization);
-            trialInfo = {
-                daysRemaining,
-                endsAt: organization.subscription.trialEndsAt
-            };
-        }
-
         // Check if upgrade is recommended
         const upgradeCheck = await shouldUpgrade(req.user.organization);
 
@@ -52,7 +42,7 @@ exports.getStatus = async (req, res) => {
                 status: organization.subscription.status,
                 features: organization.features,
                 usage: usage,
-                trial: trialInfo,
+                trial: null, // Trial system removed - free users get 5 invoices lifetime
                 billing: subscription ? {
                     currentPeriodEnd: subscription.currentPeriodEnd,
                     nextBilledAt: subscription.nextBilledAt,
@@ -71,6 +61,7 @@ exports.getStatus = async (req, res) => {
         });
     }
 };
+
 
 /**
  * @desc    Get available plans
@@ -164,7 +155,7 @@ exports.getUsage = async (req, res) => {
         // Get historical usage (last 6 months)
         const Invoice = require('../models/Invoice');
         const monthlyUsage = [];
-        
+
         for (let i = 5; i >= 0; i--) {
             const date = new Date();
             date.setMonth(date.getMonth() - i);
@@ -228,7 +219,7 @@ exports.previewUpgrade = async (req, res) => {
 
         // Simple preview - Pro plan is $9/month
         const proPrice = 9;
-        
+
         res.json({
             success: true,
             data: {

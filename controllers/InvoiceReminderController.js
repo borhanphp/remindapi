@@ -13,19 +13,15 @@ exports.createInvoice = async (req, res) => {
         // Feature Gating: Check Plan Limits
         const user = req.user; // Assumes auth middleware populates this
         if (user.plan === 'free') {
-            const startOfMonth = new Date();
-            startOfMonth.setDate(1);
-            startOfMonth.setHours(0, 0, 0, 0);
-
+            // Lifetime Limit check (no date filter)
             const invoiceCount = await InvoiceReminder.countDocuments({
-                userId: user._id,
-                createdAt: { $gte: startOfMonth }
+                userId: user._id
             });
 
             if (invoiceCount >= 5) {
                 return res.status(403).json({
                     success: false,
-                    error: 'Free plan limit reached (5 invoices/month). Please upgrade to Pro for unlimited invoices.',
+                    error: 'Free plan limit reached (5 invoices). Please upgrade to Pro for unlimited invoices.',
                     code: 'LIMIT_REACHED'
                 });
             }

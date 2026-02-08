@@ -277,7 +277,7 @@ UserSchema.methods.hasAccessToOrg = async function (organizationId) {
 };
 
 // Indexes for better performance
-UserSchema.index({ email: 1 });
+// Note: email index is already created by unique: true
 UserSchema.index({ organization: 1 });
 UserSchema.index({ organization: 1, organizationRole: 1 });
 UserSchema.index({ resetPasswordToken: 1 });

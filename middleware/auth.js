@@ -20,21 +20,6 @@ exports.protect = async (req, res, next) => {
 
     // Check if token exists
     if (!token) {
-      // DEV MODE BYPASS: If no token, use the first Super Admin or any user found
-      const fallbackUser = await User.findOne({ isSuperAdmin: true }) || await User.findOne({});
-
-      if (fallbackUser) {
-        req.user = fallbackUser;
-
-        // Populate organization if exists for legacy compatibility
-        if (req.user.organization) {
-          const userWithOrg = await User.findById(fallbackUser._id).populate('organization').populate('role');
-          if (userWithOrg) req.user = userWithOrg;
-        }
-
-        return next();
-      }
-
       throw new ApiError(401, 'Not authorized to access this route');
     }
 
@@ -84,12 +69,7 @@ exports.protect = async (req, res, next) => {
         }
 
         if (!membership.role) {
-          console.error('❌ Auth Error: Membership role not found/populated', {
-            userId: decoded.id,
-            email: user.email,
-            membershipId: membership._id
-          });
-          throw new ApiError(500, 'User role configuration error. Please contact support.');
+          console.log('ℹ️ Auth: Membership role not assigned (single-user mode):', user.email);
         }
 
         // Check organization subscription (skip for super admins)
@@ -112,12 +92,9 @@ exports.protect = async (req, res, next) => {
           .populate('organization')
           .select('-password');
 
+        // Role is optional for single-user SaaS - don't require it
         if (!userWithOrg.role) {
-          console.error('❌ Auth Error: User role not found/populated (legacy mode)', {
-            userId: decoded.id,
-            email: user.email
-          });
-          throw new ApiError(500, 'User role configuration error. Please contact support.');
+          console.log('ℹ️ Auth: User has no role assigned (single-user mode):', user.email);
         }
 
         if (!user.isSuperAdmin && userWithOrg.organization) {
@@ -199,42 +176,137 @@ exports.protectCustomer = async (req, res, next) => {
 // Authorize access based on permission
 exports.authorize = (permission) => {
   return async (req, res, next) => {
-    // BYPASS: Allow everyone
-    return next();
-
-    /* Original logic
     try {
-      // ... (rest of the original code)
+      // Super admins have all permissions
+      if (req.user.isSuperAdmin) {
+        return next();
+      }
+
+      // Check if user has the required permission
+      const userRole = req.user.role;
+
+      if (!userRole) {
+        throw new ApiError(403, 'Access denied: No role assigned');
+      }
+
+      // Check role permissions
+      const hasPermission = userRole.permissions && userRole.permissions.includes(permission);
+
+      if (!hasPermission) {
+        throw new ApiError(403, `Access denied: Missing permission '${permission}'`);
+      }
+
+      next();
     } catch (error) {
       next(error);
     }
-    */
   };
 };
 
 // Check if user has any of the specified permissions
 exports.authorizeAny = (permissions) => {
   return async (req, res, next) => {
-    return next(); // BYPASS
+    try {
+      // Super admins have all permissions
+      if (req.user.isSuperAdmin) {
+        return next();
+      }
+
+      const userRole = req.user.role;
+
+      if (!userRole || !userRole.permissions) {
+        throw new ApiError(403, 'Access denied: No role assigned');
+      }
+
+      // Check if user has ANY of the required permissions
+      const hasAnyPermission = permissions.some(perm =>
+        userRole.permissions.includes(perm)
+      );
+
+      if (!hasAnyPermission) {
+        throw new ApiError(403, 'Access denied: Insufficient permissions');
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
   };
 };
 
 // Check if user has all of the specified permissions
 exports.authorizeAll = (permissions) => {
   return async (req, res, next) => {
-    return next(); // BYPASS
+    try {
+      // Super admins have all permissions
+      if (req.user.isSuperAdmin) {
+        return next();
+      }
+
+      const userRole = req.user.role;
+
+      if (!userRole || !userRole.permissions) {
+        throw new ApiError(403, 'Access denied: No role assigned');
+      }
+
+      // Check if user has ALL of the required permissions
+      const hasAllPermissions = permissions.every(perm =>
+        userRole.permissions.includes(perm)
+      );
+
+      if (!hasAllPermissions) {
+        throw new ApiError(403, 'Access denied: Missing required permissions');
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
   };
 };
 
 // Require platform-level admin (super admin or authority role)
-// Require platform-level admin (super admin or authority role)
 exports.requirePlatformAdmin = (req, res, next) => {
-  return next(); // BYPASS
+  try {
+    if (req.user.isSuperAdmin) {
+      return next();
+    }
+
+    // Check for platform admin role
+    const userRole = req.user.role;
+    if (userRole && (userRole.name === 'platform_admin' || userRole.name === 'authority')) {
+      return next();
+    }
+
+    throw new ApiError(403, 'Access denied: Platform admin privileges required');
+  } catch (error) {
+    next(error);
+  }
 };
 
 // Check if user has specific role(s) - Legacy support
 exports.authorizeRole = (...roles) => {
   return (req, res, next) => {
-    return next(); // BYPASS
+    try {
+      // Super admins bypass role checks
+      if (req.user.isSuperAdmin) {
+        return next();
+      }
+
+      const userRole = req.user.role;
+      const userRoleName = userRole?.name || req.user.legacyRole;
+
+      if (!userRoleName) {
+        throw new ApiError(403, 'Access denied: No role assigned');
+      }
+
+      if (!roles.includes(userRoleName)) {
+        throw new ApiError(403, `Access denied: Required roles: ${roles.join(', ')}`);
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
   };
 };

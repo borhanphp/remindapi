@@ -15,8 +15,10 @@ exports.requireActiveSubscription = async (req, res, next) => {
             });
         }
 
-        const allowedStatuses = ['active', 'trial', 'trialing'];
-        
+        // Free and Pro users with 'active' status can access
+        // Legacy 'trial' status is also allowed for backward compatibility
+        const allowedStatuses = ['active', 'trial'];
+
         if (!allowedStatuses.includes(organization.subscription.status)) {
             return res.status(403).json({
                 success: false,
@@ -24,21 +26,6 @@ exports.requireActiveSubscription = async (req, res, next) => {
                 subscriptionStatus: organization.subscription.status,
                 requiresUpgrade: true
             });
-        }
-
-        // Check if trial has expired
-        if (organization.subscription.status === 'trial' && organization.subscription.trialEndsAt) {
-            if (new Date() > new Date(organization.subscription.trialEndsAt)) {
-                organization.subscription.status = 'expired';
-                await organization.save();
-
-                return res.status(403).json({
-                    success: false,
-                    message: 'Your trial has expired. Please upgrade to continue.',
-                    trialExpired: true,
-                    requiresUpgrade: true
-                });
-            }
         }
 
         next();
@@ -50,6 +37,7 @@ exports.requireActiveSubscription = async (req, res, next) => {
         });
     }
 };
+
 
 /**
  * Middleware to check if user is on Pro plan
@@ -106,7 +94,7 @@ exports.checkInvoiceLimit = async (req, res, next) => {
 
         // Check free plan limit
         const maxInvoices = organization.features.maxInvoices || 5;
-        
+
         // Count invoices for current month
         const Invoice = require('../models/Invoice');
         const startOfMonth = new Date();

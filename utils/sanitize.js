@@ -94,10 +94,105 @@ const createSafeSearchRegex = (searchTerm, maxLength = 100) => {
     return new RegExp(escaped, 'i');
 };
 
+/**
+ * Sanitize HTML content to prevent XSS attacks
+ * Removes script tags, event handlers, and dangerous content
+ * @param {string} input - HTML string to sanitize
+ * @returns {string} - Sanitized HTML
+ */
+const sanitizeHtml = (input) => {
+    if (typeof input !== 'string') return input;
+
+    return input
+        // Remove script tags and content
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        // Remove style tags and content
+        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+        // Remove on* event handlers
+        .replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '')
+        .replace(/\bon\w+\s*=\s*[^\s>]*/gi, '')
+        // Remove javascript: and vbscript: URLs
+        .replace(/javascript:/gi, '')
+        .replace(/vbscript:/gi, '')
+        // Remove data: URLs (except for images)
+        .replace(/data:(?!image\/)/gi, '')
+        .trim();
+};
+
+/**
+ * Validate and sanitize email address
+ * Prevents email header injection attacks
+ * @param {string} email - Email to validate
+ * @returns {string|null} - Sanitized email or null if invalid
+ */
+const sanitizeEmail = (email) => {
+    if (typeof email !== 'string') return null;
+
+    const trimmed = email.trim().toLowerCase();
+
+    // Basic email regex
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+    if (!emailRegex.test(trimmed)) return null;
+
+    // Prevent email header injection (CRLF injection)
+    if (trimmed.includes('\n') || trimmed.includes('\r') ||
+        trimmed.includes('%0a') || trimmed.includes('%0d')) {
+        return null;
+    }
+
+    return trimmed;
+};
+
+/**
+ * Middleware to sanitize request body
+ * Applies sanitization to all string fields in request body
+ * @param {Object} options - Configuration options
+ * @param {Array<string>} options.htmlFields - Fields that should use HTML sanitization
+ * @param {Array<string>} options.emailFields - Fields that should use email sanitization
+ */
+const sanitizeBody = (options = {}) => {
+    const { htmlFields = [], emailFields = [] } = options;
+
+    return (req, res, next) => {
+        if (req.body && typeof req.body === 'object') {
+            const sanitizeObj = (obj) => {
+                const sanitized = {};
+                for (const [key, value] of Object.entries(obj)) {
+                    if (typeof value === 'string') {
+                        if (emailFields.includes(key)) {
+                            sanitized[key] = sanitizeEmail(value) || value;
+                        } else if (htmlFields.includes(key)) {
+                            sanitized[key] = sanitizeHtml(value);
+                        } else {
+                            sanitized[key] = sanitizeString(value, 10000);
+                        }
+                    } else if (Array.isArray(value)) {
+                        sanitized[key] = value.map(item =>
+                            typeof item === 'string' ? sanitizeString(item, 10000) : item
+                        );
+                    } else if (typeof value === 'object' && value !== null) {
+                        sanitized[key] = sanitizeObj(value);
+                    } else {
+                        sanitized[key] = value;
+                    }
+                }
+                return sanitized;
+            };
+            req.body = sanitizeObj(req.body);
+        }
+        next();
+    };
+};
+
 module.exports = {
     escapeRegex,
     sanitizeMongoQuery,
     isValidObjectId,
     sanitizeString,
-    createSafeSearchRegex
+    createSafeSearchRegex,
+    sanitizeHtml,
+    sanitizeEmail,
+    sanitizeBody
 };
+

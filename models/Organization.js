@@ -36,11 +36,11 @@ const organizationSchema = new mongoose.Schema({
     status: {
       type: String,
       enum: ['active', 'trial', 'expired', 'cancelled', 'past_due'],
-      default: 'trial'
+      default: 'active'
     },
     trialEndsAt: {
       type: Date,
-      default: () => new Date(+new Date() + 14 * 24 * 60 * 60 * 1000) // 14 days trial
+      default: null // No trial period - free users get 5 invoices lifetime
     },
     currentPeriodEnd: Date,
     paddleCustomerId: String,
@@ -178,6 +178,6 @@ const organizationSchema = new mongoose.Schema({
 });
 
 // Index for faster queries
-organizationSchema.index({ slug: 1 });
+// Note: slug index is already created by unique: true
 
 module.exports = mongoose.model('Organization', organizationSchema); 

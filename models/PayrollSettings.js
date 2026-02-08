@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const PayrollSettingsSchema = new mongoose.Schema({
-  organization: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', index: true, required: true, unique: true },
+  organization: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', required: true, unique: true },
   payFrequency: { type: String, enum: ['monthly', 'biweekly', 'weekly'], default: 'monthly' },
   incomeTaxBrackets: [{ upTo: Number, rate: Number }],
   socialSecurityRate: { type: Number, default: 0 },

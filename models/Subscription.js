@@ -124,9 +124,8 @@ subscriptionSchema.statics.plans = {
 };
 
 // Index for faster queries
+// Note: paddleSubscriptionId and paddleCustomerId use sparse: true which already creates indexes
 subscriptionSchema.index({ organization: 1 });
-subscriptionSchema.index({ paddleSubscriptionId: 1 });
-subscriptionSchema.index({ paddleCustomerId: 1 });
 subscriptionSchema.index({ status: 1 });
 
 module.exports = mongoose.model('Subscription', subscriptionSchema); 
