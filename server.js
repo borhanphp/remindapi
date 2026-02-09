@@ -61,8 +61,10 @@ const defaultOrigins = [
   'http://127.0.0.1:3000',
   'http://localhost:3001',
   'http://localhost:3002',
+  'http://localhost:3003',
   'http://127.0.0.1:3001',
   'http://127.0.0.1:3002',
+  'http://127.0.0.1:3003',
   'http://localhost:4000',
   'http://127.0.0.1:4000',
   'https://inventory-beige-psi.vercel.app',
@@ -171,6 +173,9 @@ app.post('/api/paddle/webhook', paddleController.handleWebhook);
 
 
 
+// Public contact form route
+app.use('/api/contact', require('./routes/contactRoutes'));
+
 // Invoice Reminder Tool Routes
 app.use('/api/invoice-reminder', require('./routes/invoiceReminderRoutes'));
 
@@ -181,6 +186,8 @@ app.use('/api/integration', require('./routes/integrationRoutes'));
 // Organization approval routes (super admin only)
 app.use('/api/admin/organizations', require('./routes/organizationApproval'));
 app.use('/api/admin/audit', require('./routes/adminAuditRoutes'));
+app.use('/api/admin/contacts', require('./routes/adminContactRoutes'));
+app.use('/api/admin/users', require('./routes/adminUsersRoutes'));
 
 // Module configuration endpoint has been deprecated; all modules are enabled by default.
 

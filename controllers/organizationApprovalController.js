@@ -35,9 +35,9 @@ exports.getAllOrganizations = async (req, res) => {
     // Get owner details for each organization
     const orgsWithOwners = await Promise.all(
       organizations.map(async (org) => {
-        const owner = await User.findOne({ 
-          organization: org._id, 
-          isOwner: true 
+        const owner = await User.findOne({
+          organization: org._id,
+          isOwner: true
         }).select('name email isEmailVerified');
 
         return {
@@ -141,9 +141,9 @@ exports.approveOrganization = async (req, res) => {
     await organization.save();
 
     // TODO: Send email notification to organization owner
-    const owner = await User.findOne({ 
-      organization: organization._id, 
-      isOwner: true 
+    const owner = await User.findOne({
+      organization: organization._id,
+      isOwner: true
     });
 
     if (owner) {
@@ -198,9 +198,9 @@ exports.rejectOrganization = async (req, res) => {
     await organization.save();
 
     // TODO: Send email notification to organization owner
-    const owner = await User.findOne({ 
-      organization: organization._id, 
-      isOwner: true 
+    const owner = await User.findOne({
+      organization: organization._id,
+      isOwner: true
     });
 
     if (owner) {
@@ -252,6 +252,137 @@ exports.getApprovalStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch statistics'
+    });
+  }
+};
+
+/**
+ * @desc    Deactivate/Activate organization
+ * @route   PUT /api/admin/organizations/:id/toggle-status
+ * @access  Private/SuperAdmin
+ */
+exports.toggleOrganizationStatus = async (req, res) => {
+  try {
+    const organization = await Organization.findById(req.params.id);
+
+    if (!organization) {
+      return res.status(404).json({
+        success: false,
+        message: 'Organization not found'
+      });
+    }
+
+    // Toggle isActive status
+    organization.isActive = !organization.isActive;
+    await organization.save();
+
+    // Also update all users in the organization
+    await User.updateMany(
+      { organization: organization._id },
+      { isActive: organization.isActive }
+    );
+
+    res.json({
+      success: true,
+      message: `Organization ${organization.isActive ? 'activated' : 'deactivated'} successfully`,
+      data: organization
+    });
+
+  } catch (error) {
+    console.error('Toggle organization status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update organization status'
+    });
+  }
+};
+
+/**
+ * @desc    Delete organization and all related data
+ * @route   DELETE /api/admin/organizations/:id
+ * @access  Private/SuperAdmin
+ */
+exports.deleteOrganization = async (req, res) => {
+  try {
+    const organization = await Organization.findById(req.params.id);
+
+    if (!organization) {
+      return res.status(404).json({
+        success: false,
+        message: 'Organization not found'
+      });
+    }
+
+    // Delete all users in the organization
+    await User.deleteMany({ organization: organization._id });
+
+    // Delete organization memberships
+    const OrganizationMembership = require('../models/OrganizationMembership');
+    await OrganizationMembership.deleteMany({ organization: organization._id });
+
+    // Delete roles for this organization
+    const Role = require('../models/Role');
+    await Role.deleteMany({ organization: organization._id });
+
+    // Delete the organization
+    await Organization.findByIdAndDelete(req.params.id);
+
+    res.json({
+      success: true,
+      message: 'Organization and all related data deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Delete organization error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete organization'
+    });
+  }
+};
+
+/**
+ * @desc    Cancel organization subscription
+ * @route   PUT /api/admin/organizations/:id/cancel-subscription
+ * @access  Private/SuperAdmin
+ */
+exports.cancelSubscription = async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const organization = await Organization.findById(req.params.id);
+
+    if (!organization) {
+      return res.status(404).json({
+        success: false,
+        message: 'Organization not found'
+      });
+    }
+
+    if (!organization.subscription || organization.subscription.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Organization has no active subscription'
+      });
+    }
+
+    // Update subscription status
+    organization.subscription.status = 'cancelled';
+    organization.subscription.cancellationReason = reason || 'Cancelled by admin';
+    organization.subscription.cancelledAt = new Date();
+    organization.subscription.plan = 'free';
+    await organization.save();
+
+    res.json({
+      success: true,
+      message: 'Subscription cancelled successfully',
+      data: organization
+    });
+
+  } catch (error) {
+    console.error('Cancel subscription error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to cancel subscription'
     });
   }
 };

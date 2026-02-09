@@ -271,6 +271,25 @@ exports.login = async (req, res) => {
 
     // If user has no memberships at all
     if (memberships.length === 0) {
+      // Super admins can log in without organization membership
+      if (user.isSuperAdmin) {
+        const token = generateToken(user._id);
+
+        return res.json({
+          success: true,
+          token,
+          requiresOrgSelection: false,
+          user: {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            isActive: user.isActive,
+            isSuperAdmin: user.isSuperAdmin,
+            isOwner: false,
+          },
+        });
+      }
+
       return res.status(403).json({
         success: false,
         message: 'You are not a member of any organization. Please contact your administrator.',

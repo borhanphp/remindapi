@@ -25,9 +25,11 @@ const inventoryReports = require('./inventoryReports');
 const marketing = require('./marketingRoutes');
 const notifications = require('./notificationRoutes');
 const reporting = require('./reportingRoutes');
+const contact = require('./contactRoutes');
 
 // Mount routes
 router.use('/auth', auth);
+router.use('/contact', contact);
 router.use('/saas', saas);
 router.use('/marketing', marketing);
 router.use('/organizations', organizations);

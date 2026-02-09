@@ -6,7 +6,10 @@ const {
   getOrganizationDetails,
   approveOrganization,
   rejectOrganization,
-  getApprovalStats
+  getApprovalStats,
+  toggleOrganizationStatus,
+  deleteOrganization,
+  cancelSubscription
 } = require('../controllers/organizationApprovalController');
 
 // Middleware to check if user is super admin
@@ -38,4 +41,14 @@ router.put('/:id/approve', approveOrganization);
 // Reject organization
 router.put('/:id/reject', rejectOrganization);
 
+// Toggle organization active status
+router.put('/:id/toggle-status', toggleOrganizationStatus);
+
+// Cancel organization subscription
+router.put('/:id/cancel-subscription', cancelSubscription);
+
+// Delete organization
+router.delete('/:id', deleteOrganization);
+
 module.exports = router;
+
