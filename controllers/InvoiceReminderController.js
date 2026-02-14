@@ -1,5 +1,32 @@
 const InvoiceReminder = require('../models/InvoiceReminder');
 const InvoiceReminderLog = require('../models/InvoiceReminderLog');
+const { sendSMS, sendWhatsApp } = require('../services/smsService');
+
+/**
+ * Build a short plain-text reminder message suitable for SMS/WhatsApp
+ */
+function buildSmsReminderMessage(invoice, senderName, reminderType) {
+    const invoiceRef = invoice.invoiceNumber ? ` #${invoice.invoiceNumber}` : '';
+    const amount = `$${invoice.amount.toLocaleString()}`;
+    const dueStr = new Date(invoice.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    let msg = '';
+
+    if (reminderType === 'before_due') {
+        msg = `Hi ${invoice.clientName}, friendly reminder: invoice${invoiceRef} from ${senderName} for ${amount} is due ${dueStr}.`;
+    } else if (reminderType === 'on_due') {
+        msg = `Hi ${invoice.clientName}, invoice${invoiceRef} from ${senderName} for ${amount} is due today.`;
+    } else if (reminderType === 'manual_reminder') {
+        msg = `Hi ${invoice.clientName}, reminder about invoice${invoiceRef} from ${senderName} for ${amount}, due ${dueStr}.`;
+    } else {
+        msg = `Hi ${invoice.clientName}, invoice${invoiceRef} from ${senderName} for ${amount} was due ${dueStr}. Please pay ASAP.`;
+    }
+
+    if (invoice.paymentLink) {
+        msg += `\nPay here: ${invoice.paymentLink}`;
+    }
+
+    return msg;
+}
 
 /**
  * @desc    Create a new invoice
@@ -8,7 +35,7 @@ const InvoiceReminderLog = require('../models/InvoiceReminderLog');
  */
 exports.createInvoice = async (req, res) => {
     try {
-        const { clientName, clientEmail, amount, dueDate, paymentLink, invoiceNumber } = req.body;
+        const { clientName, clientEmail, clientPhone, amount, dueDate, paymentLink, invoiceNumber, reminderChannels } = req.body;
 
         // Feature Gating: Check Plan Limits
         const user = req.user; // Assumes auth middleware populates this
@@ -27,14 +54,23 @@ exports.createInvoice = async (req, res) => {
             }
         }
 
+        // Pro-only gating: Strip SMS/WhatsApp for free users
+        let allowedChannels = reminderChannels && reminderChannels.length > 0 ? reminderChannels : ['email'];
+        if (user.plan === 'free') {
+            allowedChannels = allowedChannels.filter(ch => ch === 'email');
+            if (allowedChannels.length === 0) allowedChannels = ['email'];
+        }
+
         const invoice = await InvoiceReminder.create({
-            userId: req.user._id, // Assuming auth middleware adds user to req
+            userId: req.user._id,
             clientName,
             clientEmail,
+            clientPhone: clientPhone || null,
             amount,
             dueDate,
             paymentLink,
-            invoiceNumber
+            invoiceNumber,
+            reminderChannels: allowedChannels
         });
 
         res.status(201).json({
@@ -236,7 +272,7 @@ exports.deleteInvoice = async (req, res) => {
 };
 
 /**
- * @desc    Send manual reminder
+ * @desc    Send manual reminder via all configured channels
  * @route   POST /api/invoice-reminder/invoices/:id/remind
  * @access  Private
  */
@@ -259,59 +295,58 @@ exports.sendManualReminder = async (req, res) => {
             });
         }
 
-        // Send Email
-        const { sendEmail } = require('../utils/notify');
-
         const senderName = invoice.userId.companyName || invoice.userId.name;
-        // Use invoiceNumber if available, otherwise send nothing (no fallback ID)
         const invoiceRef = invoice.invoiceNumber ? `#${invoice.invoiceNumber}` : '';
         const invoiceDisplay = invoiceRef ? ` ${invoiceRef}` : '';
-
-        // ONLY use custom link.
         const paymentLink = invoice.paymentLink;
+        const channels = invoice.reminderChannels || ['email'];
+        const results = [];
 
-        const subject = `Reminder: Invoice${invoiceDisplay} from ${senderName}`;
+        // --- Send via Email ---
+        if (channels.includes('email')) {
+            const { sendEmail } = require('../utils/notify');
 
-        // Plain text version
-        let message = `Hi ${invoice.clientName},\n\n`;
-        message += `Just a friendly reminder about invoice${invoiceDisplay}\n`;
-        message += `from ${senderName} for $${invoice.amount.toLocaleString()}, due ${new Date(invoice.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`;
+            const subject = `Reminder: Invoice${invoiceDisplay} from ${senderName}`;
+            let message = `Hi ${invoice.clientName},\n\n`;
+            message += `Just a friendly reminder about invoice${invoiceDisplay}\n`;
+            message += `from ${senderName} for $${invoice.amount.toLocaleString()}, due ${new Date(invoice.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`;
+            if (paymentLink) {
+                message += `\n\nYou can view or pay the invoice here:\n👉 ${paymentLink}`;
+            } else {
+                message += `\n\nPlease contact ${senderName} for payment details.`;
+            }
+            message += `\n\nThanks,\n${senderName}`;
 
-        if (paymentLink) {
-            message += `\n\nYou can view or pay the invoice here:\n👉 ${paymentLink}`;
-        } else {
-            message += `\n\nPlease contact ${senderName} for payment details.`;
-        }
-
-        message += `\n\nThanks,\n${senderName}`;
-
-        // HTML version
-        let htmlMessage = `<p>Hi ${invoice.clientName},</p>
+            let htmlMessage = `<p>Hi ${invoice.clientName},</p>
 <p>Just a friendly reminder about invoice${invoiceRef ? ` <strong>${invoiceRef}</strong>` : ''}<br>
 from ${senderName} for <strong>$${invoice.amount.toLocaleString()}</strong>, due ${new Date(invoice.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.</p>`;
+            if (paymentLink) {
+                htmlMessage += `<p>You can view or pay the invoice here:<br>\n👉 <a href="${paymentLink}">${paymentLink}</a></p>`;
+            } else {
+                htmlMessage += `<p>Please contact ${senderName} for payment details.</p>`;
+            }
+            htmlMessage += `<p>Thanks,<br>\n${senderName}</p>`;
 
-        if (paymentLink) {
-            htmlMessage += `<p>You can view or pay the invoice here:<br>
-👉 <a href="${paymentLink}">${paymentLink}</a></p>`;
-        } else {
-            htmlMessage += `<p>Please contact ${senderName} for payment details.</p>`;
+            await sendEmail({ to: invoice.clientEmail, subject, text: message, html: htmlMessage });
+            await InvoiceReminderLog.create({ invoiceId: invoice._id, type: 'manual_reminder', channel: 'email' });
+            results.push('email');
         }
 
-        htmlMessage += `<p>Thanks,<br>
-${senderName}</p>`;
+        // --- Send via SMS ---
+        if (channels.includes('sms') && invoice.clientPhone) {
+            const smsBody = buildSmsReminderMessage(invoice, senderName, 'manual_reminder');
+            await sendSMS({ to: invoice.clientPhone, body: smsBody });
+            await InvoiceReminderLog.create({ invoiceId: invoice._id, type: 'manual_reminder', channel: 'sms' });
+            results.push('sms');
+        }
 
-        await sendEmail({
-            to: invoice.clientEmail,
-            subject: subject,
-            text: message,
-            html: htmlMessage
-        });
-
-        // Log it
-        await InvoiceReminderLog.create({
-            invoiceId: invoice._id,
-            type: 'manual_reminder',
-        });
+        // --- Send via WhatsApp ---
+        if (channels.includes('whatsapp') && invoice.clientPhone) {
+            const waBody = buildSmsReminderMessage(invoice, senderName, 'manual_reminder');
+            await sendWhatsApp({ to: invoice.clientPhone, body: waBody });
+            await InvoiceReminderLog.create({ invoiceId: invoice._id, type: 'manual_reminder', channel: 'whatsapp' });
+            results.push('whatsapp');
+        }
 
         // Update invoice remindersSent
         if (!invoice.remindersSent) invoice.remindersSent = [];
@@ -320,7 +355,8 @@ ${senderName}</p>`;
 
         res.status(200).json({
             success: true,
-            message: 'Reminder sent successfully'
+            message: `Reminder sent via: ${results.join(', ')}`,
+            channels: results
         });
     } catch (err) {
         console.error(err);
@@ -381,17 +417,14 @@ exports.checkAndSendReminders = async () => {
                 });
 
                 if (!alreadySent) {
-                    // Send Email
-                    const { sendEmail } = require('../utils/notify'); // Lazy load
-
+                    const { sendEmail } = require('../utils/notify');
                     const senderName = invoice.userId.companyName || invoice.userId.name;
-                    // Use invoiceNumber if available, otherwise send nothing
                     const invoiceRef = invoice.invoiceNumber ? `#${invoice.invoiceNumber}` : '';
                     const invoiceDisplay = invoiceRef ? ` ${invoiceRef}` : '';
                     const invoiceRefHtml = invoiceRef ? ` <strong>${invoiceRef}</strong>` : '';
-
-                    // ONLY use custom link.
                     const paymentLink = invoice.paymentLink;
+                    const channels = invoice.reminderChannels || ['email'];
+                    const logType = reminderType.startsWith('after_due') ? 'after_due' : reminderType;
 
                     let subject = `Reminder: Invoice${invoiceDisplay} from ${senderName}`;
                     let plainMessage = `Hi ${invoice.clientName},\n\n`;
@@ -410,43 +443,45 @@ exports.checkAndSendReminders = async () => {
                         plainMessage += `Your invoice${invoiceDisplay} from ${senderName} for $${invoice.amount.toLocaleString()} was due on ${invoice.dueDate.toDateString()}. Please pay as soon as possible.`;
                         htmlBody = `Your invoice${invoiceRefHtml} from ${senderName}<br>for <strong>$${invoice.amount.toLocaleString()}</strong> was due on ${invoice.dueDate.toDateString()}.<br><span style="color: red;">Please pay as soon as possible.</span>`;
 
-                        // Update status to overdue if not already
                         if (invoice.status !== 'overdue') {
                             invoice.status = 'overdue';
                             await invoice.save();
                         }
                     }
 
-                    // Append link and signature
+                    // Append link and signature for email
                     if (paymentLink) {
                         plainMessage += `\n\nYou can view or pay the invoice here:\n👉 ${paymentLink}`;
-                        htmlBody += `<p>You can view or pay the invoice here:<br>
-👉 <a href="${paymentLink}">${paymentLink}</a></p>`;
+                        htmlBody += `<p>You can view or pay the invoice here:<br>\n👉 <a href="${paymentLink}">${paymentLink}</a></p>`;
                     } else {
                         plainMessage += `\n\nPlease contact ${senderName} for payment details.`;
                         htmlBody += `<p>Please contact ${senderName} for payment details.</p>`;
                     }
-
                     plainMessage += `\n\nThanks,\n${senderName}`;
-                    const htmlMessage = `<p>Hi ${invoice.clientName},</p>
-<p>${htmlBody}</p>
-<p>Thanks,<br>
-${senderName}</p>`;
+                    const htmlMessage = `<p>Hi ${invoice.clientName},</p>\n<p>${htmlBody}</p>\n<p>Thanks,<br>\n${senderName}</p>`;
 
-                    console.log(`[InvoiceReminder] Sending ${reminderType} to ${invoice.clientEmail}`);
+                    // --- Send via Email ---
+                    if (channels.includes('email')) {
+                        console.log(`[InvoiceReminder] Sending ${reminderType} email to ${invoice.clientEmail}`);
+                        await sendEmail({ to: invoice.clientEmail, subject, text: plainMessage, html: htmlMessage });
+                        await InvoiceReminderLog.create({ invoiceId: invoice._id, type: logType, channel: 'email' });
+                    }
 
-                    await sendEmail({
-                        to: invoice.clientEmail,
-                        subject: subject,
-                        text: plainMessage,
-                        html: htmlMessage
-                    });
+                    // --- Send via SMS ---
+                    if (channels.includes('sms') && invoice.clientPhone) {
+                        console.log(`[InvoiceReminder] Sending ${reminderType} SMS to ${invoice.clientPhone}`);
+                        const smsBody = buildSmsReminderMessage(invoice, senderName, reminderType);
+                        await sendSMS({ to: invoice.clientPhone, body: smsBody });
+                        await InvoiceReminderLog.create({ invoiceId: invoice._id, type: logType, channel: 'sms' });
+                    }
 
-                    // Log it
-                    await InvoiceReminderLog.create({
-                        invoiceId: invoice._id,
-                        type: reminderType.startsWith('after_due') ? 'after_due' : reminderType,
-                    });
+                    // --- Send via WhatsApp ---
+                    if (channels.includes('whatsapp') && invoice.clientPhone) {
+                        console.log(`[InvoiceReminder] Sending ${reminderType} WhatsApp to ${invoice.clientPhone}`);
+                        const waBody = buildSmsReminderMessage(invoice, senderName, reminderType);
+                        await sendWhatsApp({ to: invoice.clientPhone, body: waBody });
+                        await InvoiceReminderLog.create({ invoiceId: invoice._id, type: logType, channel: 'whatsapp' });
+                    }
 
                     // Update invoice remindersSent
                     if (!invoice.remindersSent) invoice.remindersSent = [];

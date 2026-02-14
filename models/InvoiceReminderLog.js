@@ -11,6 +11,11 @@ const invoiceReminderLogSchema = new mongoose.Schema({
         enum: ['before_due', 'on_due', 'after_due', 'manual_reminder'],
         required: true
     },
+    channel: {
+        type: String,
+        enum: ['email', 'sms', 'whatsapp'],
+        default: 'email'
+    },
     sentAt: {
         type: Date,
         default: Date.now

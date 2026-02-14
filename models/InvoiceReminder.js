@@ -18,6 +18,11 @@ const invoiceReminderSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    clientPhone: {
+        type: String,
+        default: null,
+        trim: true
+    },
     amount: {
         type: Number,
         required: true
@@ -34,6 +39,11 @@ const invoiceReminderSchema = new mongoose.Schema({
         type: String,
         enum: ['draft', 'sent', 'paid', 'overdue'],
         default: 'draft'
+    },
+    reminderChannels: {
+        type: [String],
+        enum: ['email', 'sms', 'whatsapp'],
+        default: ['email']
     },
     remindersSent: [{
         type: Date
