@@ -102,6 +102,8 @@ subscriptionSchema.statics.plans = {
     features: {
       maxInvoices: 5,
       emailReminders: true,
+      smsReminders: false,
+      whatsappReminders: false,
       basicReporting: true,
       automatedSchedule: false,
       prioritySupport: false,
@@ -115,6 +117,8 @@ subscriptionSchema.statics.plans = {
     features: {
       maxInvoices: -1, // unlimited
       emailReminders: true,
+      smsReminders: true,
+      whatsappReminders: true,
       basicReporting: true,
       automatedSchedule: true,
       prioritySupport: true,

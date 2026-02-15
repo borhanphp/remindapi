@@ -67,12 +67,8 @@ const defaultOrigins = [
   'http://127.0.0.1:3003',
   'http://localhost:4000',
   'http://127.0.0.1:4000',
-  'https://inventory-beige-psi.vercel.app',
-  'https://www.zeeventory.com',
-  'https://zeeventory.com',
-  'https://www.inventory-adming-portal.vercel.app',
-  'inventory-adming-portal.vercel.app',
-  'https://inventory-adming-portal.vercel.app'
+  'https://zeeremind.com',
+  'https://www.zeeremind.com'
 ];
 const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 // Merge environment origins with defaults (no duplicates)

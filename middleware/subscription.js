@@ -92,24 +92,23 @@ exports.checkInvoiceLimit = async (req, res, next) => {
             return next();
         }
 
-        // Check free plan limit
+        // Check free plan lifetime limit
         const maxInvoices = organization.features.maxInvoices || 5;
 
-        // Count invoices for current month
-        const Invoice = require('../models/Invoice');
-        const startOfMonth = new Date();
-        startOfMonth.setDate(1);
-        startOfMonth.setHours(0, 0, 0, 0);
+        // Count ALL invoices (lifetime limit for free plan)
+        const InvoiceReminder = require('../models/InvoiceReminder');
+        const User = require('../models/User');
+        const orgUsers = await User.find({ organization: req.user.organization }).select('_id');
+        const userIds = orgUsers.map(u => u._id);
 
-        const invoiceCount = await Invoice.countDocuments({
-            organization: req.user.organization,
-            createdAt: { $gte: startOfMonth }
+        const invoiceCount = await InvoiceReminder.countDocuments({
+            userId: { $in: userIds }
         });
 
         if (invoiceCount >= maxInvoices) {
             return res.status(403).json({
                 success: false,
-                message: `You've reached your monthly limit of ${maxInvoices} invoices. Upgrade to Pro for unlimited invoices.`,
+                message: `You've reached your limit of ${maxInvoices} invoices. Upgrade to Pro for unlimited invoices.`,
                 currentCount: invoiceCount,
                 limit: maxInvoices,
                 requiresUpgrade: true

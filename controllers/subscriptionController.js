@@ -230,7 +230,7 @@ exports.previewUpgrade = async (req, res) => {
                 billingCycle: 'monthly',
                 features: Subscription.plans.pro.features,
                 immediateCharge: proPrice, // No proration for simplicity
-                savings: organization.subscription.plan === 'free' ? 'Unlimited invoices vs 5/month' : null
+                savings: organization.subscription.plan === 'free' ? 'Unlimited invoices vs 5 on free plan' : null
             }
         });
     } catch (error) {
