@@ -61,8 +61,8 @@ exports.registerOrganization = async (req, res) => {
       approvalStatus: 'approved', // Changed from pending to approved for immediate access
       subscription: {
         plan: 'free',
-        status: 'trial',
-        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 days trial
+        status: 'active',
+        // trialEndsAt: null // No trial period
       }
     });
 
@@ -126,18 +126,21 @@ exports.registerOrganization = async (req, res) => {
     await Subscription.create({
       organization: organization._id,
       plan: 'free',
-      status: 'trial',
+      status: 'active',
       currentPeriodStart: new Date(),
-      currentPeriodEnd: organization.subscription.trialEndsAt
+      // currentPeriodEnd: null
     });
 
     // Send welcome email with trial information
+    // Send welcome email with trial information - DISABLED
+    /*
     try {
       await subscriptionEmailService.sendTrialStartEmail(user, organization);
     } catch (emailError) {
       console.error('Failed to send trial start email:', emailError);
       // Don't fail registration if email fails
     }
+    */
 
     res.status(201).json({
       success: true,
@@ -311,8 +314,7 @@ exports.getOnboardingStatus = async (req, res) => {
       organizationSetup: true, // Already created
       profileComplete: !!(user.name && user.email),
       subscriptionActive: user.organization.subscription.status === 'active',
-      trialDaysLeft: user.organization.subscription.status === 'trial' ?
-        Math.max(0, Math.ceil((user.organization.subscription.trialEndsAt - new Date()) / (1000 * 60 * 60 * 24))) : 0
+      trialDaysLeft: 0 // No trial system
     };
 
     status.completed = status.emailVerified && status.organizationSetup && status.profileComplete;

@@ -22,7 +22,8 @@ function startScheduledTasks() {
     }
   }, 60 * 60 * 1000);
 
-  // Trial Expiration Check (Daily at midnight)
+  // Trial Expiration Check (Daily at midnight) - DISABLED (No trial system)
+  /*
   setInterval(async () => {
     try {
       await checkTrialExpirations();
@@ -30,8 +31,10 @@ function startScheduledTasks() {
       console.error('Error in Trial Expiration Check:', error);
     }
   }, 24 * 60 * 60 * 1000); // Run daily
+  */
 
-  // Run immediately on startup
+  // Run immediately on startup - DISABLED
+  /*
   setTimeout(async () => {
     try {
       await checkTrialExpirations();
@@ -39,6 +42,7 @@ function startScheduledTasks() {
       console.error('Error in initial Trial Expiration Check:', error);
     }
   }, 5000); // 5 seconds after startup
+  */
 
   // Usage Warning Check (Daily)
   setInterval(async () => {

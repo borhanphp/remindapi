@@ -302,6 +302,12 @@ exports.sendManualReminder = async (req, res) => {
         const channels = invoice.reminderChannels || ['email'];
         const results = [];
 
+        console.log('📤 Sending manual reminder:');
+        console.log('  Invoice ID:', invoice._id);
+        console.log('  Channels:', channels);
+        console.log('  Client Phone:', invoice.clientPhone || 'NOT SET');
+        console.log('  Client Email:', invoice.clientEmail);
+
         // --- Send via Email ---
         if (channels.includes('email')) {
             const { sendEmail } = require('../utils/notify');
@@ -335,17 +341,25 @@ from ${senderName} for <strong>$${invoice.amount.toLocaleString()}</strong>, due
         // --- Send via SMS ---
         if (channels.includes('sms') && invoice.clientPhone) {
             const smsBody = buildSmsReminderMessage(invoice, senderName, 'manual_reminder');
-            await sendSMS({ to: invoice.clientPhone, body: smsBody });
+            console.log('  📱 Sending SMS to:', invoice.clientPhone);
+            const smsResult = await sendSMS({ to: invoice.clientPhone, body: smsBody });
+            console.log('  📱 SMS result:', smsResult);
             await InvoiceReminderLog.create({ invoiceId: invoice._id, type: 'manual_reminder', channel: 'sms' });
             results.push('sms');
+        } else if (channels.includes('sms') && !invoice.clientPhone) {
+            console.log('  ⚠️ SMS skipped: no client phone number');
         }
 
         // --- Send via WhatsApp ---
         if (channels.includes('whatsapp') && invoice.clientPhone) {
             const waBody = buildSmsReminderMessage(invoice, senderName, 'manual_reminder');
-            await sendWhatsApp({ to: invoice.clientPhone, body: waBody });
+            console.log('  💬 Sending WhatsApp to:', invoice.clientPhone);
+            const waResult = await sendWhatsApp({ to: invoice.clientPhone, body: waBody });
+            console.log('  💬 WhatsApp result:', waResult);
             await InvoiceReminderLog.create({ invoiceId: invoice._id, type: 'manual_reminder', channel: 'whatsapp' });
             results.push('whatsapp');
+        } else if (channels.includes('whatsapp') && !invoice.clientPhone) {
+            console.log('  ⚠️ WhatsApp skipped: no client phone number');
         }
 
         // Update invoice remindersSent
