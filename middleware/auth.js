@@ -41,12 +41,10 @@ exports.protect = async (req, res, next) => {
       }
 
       // Check if email is verified - block access to all routes if not verified
-      /*
       if (user.isEmailVerified === false) {
         console.error('❌ Auth Error: Email not verified:', user.email);
         throw new ApiError(403, 'Please verify your email address to access this resource. Check your inbox for the verification link.');
       }
-      */
 
       // If token has organizationId, use membership-based context
       if (decoded.organizationId) {

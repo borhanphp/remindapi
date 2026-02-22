@@ -5,57 +5,36 @@ const { checkAndSendReminders } = require('../controllers/InvoiceReminderControl
 const Organization = require('../models/Organization');
 const subscriptionEmailService = require('../services/subscriptionEmailService');
 const { getInvoiceUsage } = require('./subscriptionHelpers');
+const cron = require('node-cron');
 
 
 /**
- * Start the scheduled tasks
+ * Start the scheduled tasks using node-cron for reliable fixed-time scheduling
  */
 function startScheduledTasks() {
   console.log('[Scheduled Tasks] Starting all scheduled tasks...');
 
-  // Invoice Reminder Check (Hourly)
-  setInterval(async () => {
+  // Invoice Reminder Check — every hour at minute 0
+  cron.schedule('0 * * * *', async () => {
     try {
+      console.log('[Scheduled Tasks] Running hourly invoice reminder check...');
       await checkAndSendReminders();
     } catch (error) {
       console.error('Error in Invoice Reminder Check:', error);
     }
-  }, 60 * 60 * 1000);
+  });
 
-  // Trial Expiration Check (Daily at midnight) - DISABLED (No trial system)
-  /*
-  setInterval(async () => {
-    try {
-      await checkTrialExpirations();
-    } catch (error) {
-      console.error('Error in Trial Expiration Check:', error);
-    }
-  }, 24 * 60 * 60 * 1000); // Run daily
-  */
-
-  // Run immediately on startup - DISABLED
-  /*
-  setTimeout(async () => {
-    try {
-      await checkTrialExpirations();
-    } catch (error) {
-      console.error('Error in initial Trial Expiration Check:', error);
-    }
-  }, 5000); // 5 seconds after startup
-  */
-
-  // Usage Warning Check (Daily)
-  setInterval(async () => {
+  // Usage Warning Check — daily at 8:00 AM UTC
+  cron.schedule('0 8 * * *', async () => {
     try {
       await checkUsageLimits();
     } catch (error) {
       console.error('Error in Usage Limit Check:', error);
     }
-  }, 24 * 60 * 60 * 1000); // Run daily
+  });
 
-  // Simple task reminders and recurrences, every 5 minutes
-  // Skip if Task/TaskAutomation models are not available (single-purpose apps)
-  setInterval(async () => {
+  // Project task reminders and recurrences — every 5 minutes
+  cron.schedule('*/5 * * * *', async () => {
     try {
       // Check if Task model exists and has data
       if (!Task || typeof Task.find !== 'function') {
@@ -137,7 +116,17 @@ function startScheduledTasks() {
         console.error('Project automations failed:', err?.message);
       }
     }
-  }, 5 * 60 * 1000);
+  });
+
+  // Run invoice reminder check once on startup (after 10 seconds to let DB connect)
+  setTimeout(async () => {
+    try {
+      console.log('[Scheduled Tasks] Running initial invoice reminder check...');
+      await checkAndSendReminders();
+    } catch (error) {
+      console.error('Error in initial Invoice Reminder Check:', error);
+    }
+  }, 10000);
 }
 
 function computeNextDueDate(from, recurrence) {
@@ -175,71 +164,6 @@ function get(obj, path) {
 }
 
 /**
- * Check for trial expirations and send notifications
- */
-async function checkTrialExpirations() {
-  console.log('[Trial Check] Checking trial expirations...');
-
-  try {
-    const now = new Date();
-
-    // Find organizations with active trials
-    const trialsEndingSoon = await Organization.find({
-      'subscription.status': 'trial',
-      'subscription.trialEndsAt': { $exists: true }
-    });
-
-    for (const org of trialsEndingSoon) {
-      const trialEnd = new Date(org.subscription.trialEndsAt);
-      const daysRemaining = Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24));
-
-      // Find organization owner
-      const owner = await User.findOne({ organization: org._id, isOwner: true });
-      if (!owner) continue;
-
-      // Send warning at 7, 3, and 1 days before expiration
-      if (daysRemaining === 7 || daysRemaining === 3 || daysRemaining === 1) {
-        console.log(`[Trial Check] Sending expiration warning to ${owner.email} (${daysRemaining} days remaining)`);
-        await subscriptionEmailService.sendTrialExpiringEmail(owner, org, daysRemaining);
-      }
-
-      // Trial has expired
-      if (daysRemaining <= 0 && org.subscription.status === 'trial') {
-        console.log(`[Trial Check] Trial expired for organization ${org.name}, downgrading to free`);
-
-        // Update organization
-        org.subscription.status = 'expired';
-        org.subscription.plan = 'free';
-
-        // Update features to free plan
-        const Subscription = require('../models/Subscription');
-        org.features = Subscription.plans.free.features;
-
-        await org.save();
-
-        // Update all users in organization
-        await User.updateMany(
-          { organization: org._id },
-          {
-            $set: {
-              plan: 'free',
-              subscriptionStatus: 'active'
-            }
-          }
-        );
-
-        // Send trial expired email
-        await subscriptionEmailService.sendTrialExpiredEmail(owner, org);
-      }
-    }
-
-    console.log(`[Trial Check] Checked ${trialsEndingSoon.length} trial organizations`);
-  } catch (error) {
-    console.error('[Trial Check] Error:', error);
-  }
-}
-
-/**
  * Check usage limits and send warnings
  */
 async function checkUsageLimits() {
@@ -249,7 +173,7 @@ async function checkUsageLimits() {
     // Find all free plan organizations
     const freeOrgs = await Organization.find({
       'subscription.plan': 'free',
-      'subscription.status': { $in: ['active', 'trial'] }
+      'subscription.status': 'active'
     });
 
     for (const org of freeOrgs) {
@@ -274,6 +198,5 @@ async function checkUsageLimits() {
 
 module.exports = {
   startScheduledTasks,
-  checkTrialExpirations,
   checkUsageLimits
-}; 
+};

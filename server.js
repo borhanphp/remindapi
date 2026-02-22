@@ -39,6 +39,19 @@ const securityHeaders = (req, res, next) => {
   // Permissions policy - restrict browser features
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 
+  // Content-Security-Policy - restrict resource loading to prevent XSS
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: https:",
+    "connect-src 'self' https://api.paddle.com https://sandbox-api.paddle.com",
+    "frame-src 'self' https://checkout.paddle.com https://sandbox-checkout.paddle.com",
+    "object-src 'none'",
+    "base-uri 'self'"
+  ].join('; '));
+
   // In production, also add HSTS
   if (process.env.NODE_ENV === 'production') {
     // Strict Transport Security - force HTTPS for 1 year
@@ -79,16 +92,11 @@ const origins = allowedOrigins.length > 0
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Log CORS requests in production for debugging
-    if (process.env.NODE_ENV === 'production' && origin) {
-      console.log(`CORS request from origin: ${origin}`);
-    }
-
     if (!origin) return callback(null, true); // mobile apps / curl / same-origin
     if (origins.includes(origin)) return callback(null, true);
     if (process.env.NODE_ENV !== 'production') return callback(null, true);
 
-    console.error(`CORS BLOCKED for origin: ${origin}. Allowed origins:`, origins);
+    console.error(`CORS BLOCKED for origin: ${origin}`);
     return callback(new Error(`CORS blocked for origin ${origin}`));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -101,9 +109,14 @@ app.use(cors({
 
 // Raw body parsing for Paddle webhooks (must be before json parser for this route)
 app.use('/api/paddle/webhook', express.raw({ type: 'application/json' }), (req, res, next) => {
-  req.rawBody = req.body.toString();
-  req.body = JSON.parse(req.body);
-  next();
+  try {
+    req.rawBody = req.body.toString();
+    req.body = JSON.parse(req.body);
+    next();
+  } catch (err) {
+    console.error('[Paddle Webhook] Failed to parse request body:', err.message);
+    return res.status(400).json({ error: 'Invalid request body' });
+  }
 });
 
 // Request body parsing with size limits
@@ -193,7 +206,7 @@ app.get('/', async (req, res) => {
   const isConnected = mongoose.connection.readyState === 1;
 
   res.json({
-    message: 'Welcome to Zeeventory API',
+    message: 'Welcome to ZeeRemind API',
     databaseStatus: isConnected ? 'connected' : 'disconnected',
     version: '1.0.0'
     // NOTE: MongoDB URI removed for security - don't expose internal connection details
@@ -232,6 +245,30 @@ setIO(io);
 io.on('connection', (socket) => {
   // Namespace/rooms can be added later (e.g., per organization)
 });
+
+// Graceful shutdown handler
+const gracefulShutdown = async (signal) => {
+  console.log(`\n[${signal}] Shutting down gracefully...`);
+  server.close(async () => {
+    console.log('[Shutdown] HTTP server closed');
+    try {
+      await mongoose.connection.close();
+      console.log('[Shutdown] MongoDB connection closed');
+    } catch (err) {
+      console.error('[Shutdown] Error closing MongoDB:', err);
+    }
+    process.exit(0);
+  });
+
+  // Force shutdown after 10 seconds
+  setTimeout(() => {
+    console.error('[Shutdown] Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 server.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);

@@ -9,19 +9,22 @@ exports.handleWebhook = async (req, res) => {
     try {
         const { verifyWebhookSignature } = require('../config/paddle');
         const signature = req.headers['paddle-signature'];
-        
+
         // Verify webhook signature for security
-        if (process.env.NODE_ENV === 'production' && signature) {
-            try {
-                const isValid = verifyWebhookSignature(req.rawBody, signature);
-                if (!isValid) {
-                    console.error('[Paddle Webhook] Invalid signature');
-                    return res.status(401).json({ error: 'Invalid signature' });
-                }
-            } catch (err) {
-                console.error('[Paddle Webhook] Signature verification failed:', err);
-                return res.status(401).json({ error: 'Signature verification failed' });
+        if (!signature) {
+            console.error('[Paddle Webhook] Missing signature header');
+            return res.status(401).json({ error: 'Missing signature' });
+        }
+
+        try {
+            const isValid = verifyWebhookSignature(req.rawBody, signature);
+            if (!isValid) {
+                console.error('[Paddle Webhook] Invalid signature');
+                return res.status(401).json({ error: 'Invalid signature' });
             }
+        } catch (err) {
+            console.error('[Paddle Webhook] Signature verification failed:', err);
+            return res.status(401).json({ error: 'Signature verification failed' });
         }
 
         const event = req.body;
@@ -99,7 +102,7 @@ async function handleSubscriptionUpdate(data) {
     const organization = await Organization.findById(organizationId);
     if (organization) {
         const wasFreePlan = organization.subscription.plan === 'free';
-        
+
         organization.subscription.plan = 'pro';
         organization.subscription.status = 'active';
         organization.subscription.paddleCustomerId = customer_id;
@@ -116,7 +119,7 @@ async function handleSubscriptionUpdate(data) {
             prioritySupport: proFeatures.prioritySupport,
             removeBranding: proFeatures.removeBranding
         };
-        
+
         await organization.save();
 
         // Send activation email only if upgrading from free
@@ -167,7 +170,7 @@ async function handleSubscriptionCancel(data) {
     }
 
     const organization = await Organization.findById(user.organization);
-    
+
     // Check if cancellation is immediate or at period end
     const isImmediate = !scheduled_change;
 
@@ -201,8 +204,8 @@ async function handleSubscriptionCancel(data) {
 
         // Send cancellation email
         await subscriptionEmailService.sendSubscriptionCancelledEmail(
-            user, 
-            organization, 
+            user,
+            organization,
             subscription?.currentPeriodEnd
         );
 
@@ -220,8 +223,8 @@ async function handleSubscriptionCancel(data) {
 
         // Send cancellation email with end date
         await subscriptionEmailService.sendSubscriptionCancelledEmail(
-            user, 
-            organization, 
+            user,
+            organization,
             subscription?.currentPeriodEnd
         );
 
@@ -233,7 +236,7 @@ async function handleSubscriptionCancel(data) {
 async function handleSubscriptionPause(data) {
     const { id } = data;
     const user = await User.findOne({ paddleSubscriptionId: id });
-    
+
     if (user) {
         user.subscriptionStatus = 'paused';
         await user.save();
@@ -245,7 +248,7 @@ async function handleSubscriptionPause(data) {
 async function handleSubscriptionResume(data) {
     const { id, status } = data;
     const user = await User.findOne({ paddleSubscriptionId: id });
-    
+
     if (user) {
         user.subscriptionStatus = status || 'active';
         await user.save();
@@ -256,7 +259,7 @@ async function handleSubscriptionResume(data) {
 // Helper: Handle Transaction Completed
 async function handleTransactionCompleted(data) {
     const { subscription_id } = data;
-    
+
     if (subscription_id) {
         const user = await User.findOne({ paddleSubscriptionId: subscription_id });
         if (user && user.subscriptionStatus === 'past_due') {
@@ -272,7 +275,7 @@ async function handlePaymentFailed(data) {
     const { subscription_id } = data;
     const Organization = require('../models/Organization');
     const subscriptionEmailService = require('../services/subscriptionEmailService');
-    
+
     if (subscription_id) {
         const user = await User.findOne({ paddleSubscriptionId: subscription_id });
         if (user) {
@@ -303,7 +306,7 @@ exports.getPlans = async (req, res) => {
     try {
         const Subscription = require('../models/Subscription');
         const plans = Subscription.plans;
-        
+
         // Format plans for frontend
         const formattedPlans = Object.keys(plans).map(key => ({
             id: key,
@@ -344,7 +347,7 @@ exports.createCheckout = async (req, res) => {
         }
 
         const priceId = getPriceIdForPlan(plan);
-        
+
         // Return price ID and user details for frontend Paddle.js to handle
         res.status(200).json({
             success: true,
@@ -408,9 +411,9 @@ exports.cancelSubscription = async (req, res) => {
     try {
         const { paddle } = require('../config/paddle');
         const User = require('../models/User');
-        
+
         const user = await User.findById(req.user._id);
-        
+
         if (!user.paddleSubscriptionId) {
             return res.status(400).json({
                 success: false,
@@ -496,7 +499,7 @@ exports.getTransactions = async (req, res) => {
     try {
         const { paddle } = require('../config/paddle');
         const User = require('../models/User');
-        
+
         const user = await User.findById(req.user._id);
 
         if (!user.paddleCustomerId) {

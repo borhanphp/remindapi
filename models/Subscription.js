@@ -105,7 +105,7 @@ subscriptionSchema.statics.plans = {
       smsReminders: false,
       whatsappReminders: false,
       basicReporting: true,
-      automatedSchedule: false,
+      automatedSchedule: true,
       prioritySupport: false,
       removeBranding: false
     }

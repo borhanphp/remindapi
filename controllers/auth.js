@@ -579,7 +579,7 @@ exports.testEmail = async (req, res) => {
 
     await sendEmail({
       to: testEmail,
-      subject: 'Zeeventory Email Test',
+      subject: 'ZeeRemind Email Test',
       html: '<h1>This is a test email</h1><p>If you received this, your email configuration is working!</p>',
       text: 'This is a test email. If you received this, your email configuration is working!'
     });
