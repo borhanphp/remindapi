@@ -93,7 +93,7 @@ exports.checkInvoiceLimit = async (req, res, next) => {
         }
 
         // Check free plan lifetime limit
-        const maxInvoices = organization.features.maxInvoices || 5;
+        const maxInvoices = organization.features.maxInvoices || 3;
 
         // Count ALL invoices (lifetime limit for free plan)
         const InvoiceReminder = require('../models/InvoiceReminder');

@@ -78,18 +78,18 @@ exports.sendTrialExpiringEmail = async (user, organization, daysRemaining) => {
                     
                     <h3>Upgrade to Pro to keep:</h3>
                     <ul>
-                        <li>✅ Unlimited invoices (only $9/month)</li>
+                        <li>✅ Unlimited invoices (only $19/month)</li>
                         <li>✅ Automated reminder schedules</li>
                         <li>✅ Priority support</li>
                         <li>✅ Custom branding</li>
                     </ul>
                     
                     <div style="text-align: center; margin: 30px 0;">
-                        <a href="${process.env.FRONTEND_URL}/subscription/upgrade" style="background-color: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block;">Upgrade to Pro - $9/month</a>
+                        <a href="${process.env.FRONTEND_URL}/subscription/upgrade" style="background-color: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block;">Upgrade to Pro - $19/month</a>
                     </div>
                     
                     <p style="color: #6B7280; font-size: 14px;">
-                        After your trial ends, you'll be moved to the Free plan (5 invoices per month).
+                        After your trial ends, you'll be moved to the Free plan (3 invoices per month).
                     </p>
                     
                     <p>Best regards,<br>The ${process.env.APP_NAME || 'ZeeRemind'} Team</p>
@@ -122,13 +122,13 @@ exports.sendTrialExpiredEmail = async (user, organization) => {
                     <div style="background-color: #FEE2E2; border-left: 4px solid #DC2626; padding: 15px; margin: 20px 0;">
                         <h3 style="margin-top: 0;">Free Plan Limitations:</h3>
                         <ul style="margin-bottom: 0;">
-                            <li>5 invoices per month</li>
+                            <li>3 invoices per month</li>
                             <li>Basic reporting only</li>
                             <li>Standard support</li>
                         </ul>
                     </div>
                     
-                    <h3>Upgrade to Pro for just $9/month:</h3>
+                    <h3>Upgrade to Pro for just $19/month:</h3>
                     <ul>
                         <li>✅ <strong>Unlimited</strong> invoices</li>
                         <li>✅ Automated reminder schedules</li>
@@ -223,7 +223,7 @@ exports.sendSubscriptionCancelledEmail = async (user, organization, endDate) => 
                     
                     <h3>What you'll lose on the Free plan:</h3>
                     <ul>
-                        <li>❌ Unlimited invoices (only 5/month on Free)</li>
+                        <li>❌ Unlimited invoices (only 3/month on Free)</li>
                         <li>❌ Automated reminder schedules</li>
                         <li>❌ Priority support</li>
                         <li>❌ Custom branding</li>
@@ -317,7 +317,7 @@ exports.sendUsageLimitWarningEmail = async (user, organization, usage) => {
                     </div>
                     
                     <h3>Upgrade to Pro for Unlimited Invoices</h3>
-                    <p>Just $9/month gets you:</p>
+                    <p>Just $19/month gets you:</p>
                     <ul>
                         <li>✅ <strong>Unlimited</strong> invoices</li>
                         <li>✅ Automated reminder schedules</li>

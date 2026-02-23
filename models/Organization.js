@@ -40,11 +40,18 @@ const organizationSchema = new mongoose.Schema({
     },
     trialEndsAt: {
       type: Date,
-      default: null // No trial period - free users get 5 invoices lifetime
+      default: null // No trial period - free users get 3 invoices lifetime
     },
     currentPeriodEnd: Date,
     paddleCustomerId: String,
-    paddleSubscriptionId: String
+    paddleSubscriptionId: String,
+    polarCustomerId: String,
+    polarSubscriptionId: String,
+    paymentProcessor: {
+      type: String,
+      enum: ['paddle', 'polar'],
+      default: 'paddle'
+    }
   },
   // Company Information
   logo: {
@@ -131,7 +138,7 @@ const organizationSchema = new mongoose.Schema({
   features: {
     maxInvoices: {
       type: Number,
-      default: 5 // Free plan limit
+      default: 3 // Free plan limit
     },
     emailReminders: {
       type: Boolean,

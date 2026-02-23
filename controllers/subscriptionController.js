@@ -42,7 +42,7 @@ exports.getStatus = async (req, res) => {
                 status: organization.subscription.status,
                 features: organization.features,
                 usage: usage,
-                trial: null, // Trial system removed - free users get 5 invoices lifetime
+                trial: null, // Trial system removed - free users get 3 invoices lifetime
                 billing: subscription ? {
                     currentPeriodEnd: subscription.currentPeriodEnd,
                     nextBilledAt: subscription.nextBilledAt,
@@ -217,8 +217,8 @@ exports.previewUpgrade = async (req, res) => {
             });
         }
 
-        // Simple preview - Pro plan is $9/month
-        const proPrice = 9;
+        // Simple preview - Pro plan is $19/month
+        const proPrice = 19;
 
         res.json({
             success: true,
@@ -230,7 +230,7 @@ exports.previewUpgrade = async (req, res) => {
                 billingCycle: 'monthly',
                 features: Subscription.plans.pro.features,
                 immediateCharge: proPrice, // No proration for simplicity
-                savings: organization.subscription.plan === 'free' ? 'Unlimited invoices vs 5 on free plan' : null
+                savings: organization.subscription.plan === 'free' ? 'Unlimited invoices vs 3 on free plan' : null
             }
         });
     } catch (error) {

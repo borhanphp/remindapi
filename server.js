@@ -171,6 +171,8 @@ app.use('/api/profile', require('./routes/profileRoutes'));
 app.use('/api/upload', require('./routes/upload')); // Image upload routes
 app.use('/api/paddle', require('./routes/paddleRoutes')); // Paddle subscription billing
 app.use('/api/subscription', require('./routes/subscriptionRoutes')); // Subscription management
+app.use('/api/payment', require('./routes/paymentRoutes')); // Unified payment gateway
+app.use('/api/polar', require('./routes/polarRoutes')); // Polar.sh webhooks
 
 // Paddle Webhook (Public) - registered here to accessible
 const paddleController = require('./controllers/paddleController');
@@ -197,6 +199,7 @@ app.use('/api/admin/organizations', require('./routes/organizationApproval'));
 app.use('/api/admin/audit', require('./routes/adminAuditRoutes'));
 app.use('/api/admin/contacts', require('./routes/adminContactRoutes'));
 app.use('/api/admin/users', require('./routes/adminUsersRoutes'));
+app.use('/api/admin/pricing', require('./routes/adminPricingRoutes'));
 
 // Module configuration endpoint has been deprecated; all modules are enabled by default.
 

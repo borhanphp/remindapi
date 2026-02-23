@@ -145,6 +145,12 @@ const UserSchema = new mongoose.Schema(
     paddleSubscriptionId: {
       type: String,
     },
+    polarCustomerId: {
+      type: String,
+    },
+    polarSubscriptionId: {
+      type: String,
+    },
     billingCycle: {
       type: String,
       enum: ['monthly', 'yearly'],

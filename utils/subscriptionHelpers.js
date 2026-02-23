@@ -65,7 +65,7 @@ exports.getRemainingInvoices = async (organizationId) => {
             return -1; // -1 indicates unlimited
         }
 
-        const maxInvoices = organization.features.maxInvoices || 5;
+        const maxInvoices = organization.features.maxInvoices || 3;
 
         // Count invoices for current month
         const Invoice = require('../models/Invoice');
@@ -124,7 +124,7 @@ exports.getInvoiceUsage = async (organizationId) => {
         }
 
         // Free plan: count ALL invoices (lifetime limit)
-        const maxInvoices = organization.features.maxInvoices || 5;
+        const maxInvoices = organization.features.maxInvoices || 3;
 
         const invoiceCount = await InvoiceReminder.countDocuments({
             userId: { $in: userIds }
@@ -138,7 +138,7 @@ exports.getInvoiceUsage = async (organizationId) => {
         };
     } catch (error) {
         console.error('Get invoice usage error:', error);
-        return { used: 0, limit: 5, unlimited: false, remaining: 5 };
+        return { used: 0, limit: 3, unlimited: false, remaining: 3 };
     }
 };
 

@@ -45,10 +45,10 @@ exports.createInvoice = async (req, res) => {
                 userId: user._id
             });
 
-            if (invoiceCount >= 5) {
+            if (invoiceCount >= 3) {
                 return res.status(403).json({
                     success: false,
-                    error: 'Free plan limit reached (5 invoices). Please upgrade to Pro for unlimited invoices.',
+                    error: 'Free plan limit reached (3 invoices). Please upgrade to Pro for unlimited invoices.',
                     code: 'LIMIT_REACHED'
                 });
             }

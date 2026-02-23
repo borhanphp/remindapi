@@ -43,6 +43,21 @@ const subscriptionSchema = new mongoose.Schema({
   paddleTransactionId: {
     type: String
   },
+  // Polar fields
+  polarCustomerId: {
+    type: String,
+    sparse: true
+  },
+  polarSubscriptionId: {
+    type: String,
+    sparse: true
+  },
+  // Which processor handles this subscription
+  paymentProcessor: {
+    type: String,
+    enum: ['paddle', 'polar'],
+    default: 'paddle'
+  },
   // Billing details from Paddle
   billingCycle: {
     interval: {
@@ -100,7 +115,7 @@ subscriptionSchema.statics.plans = {
     price: 0,
     interval: 'month',
     features: {
-      maxInvoices: 5,
+      maxInvoices: 3,
       emailReminders: true,
       smsReminders: false,
       whatsappReminders: false,
@@ -112,7 +127,8 @@ subscriptionSchema.statics.plans = {
   },
   pro: {
     name: 'Pro',
-    price: 9,
+    price: 19,
+    annualPrice: 179,
     interval: 'month',
     features: {
       maxInvoices: -1, // unlimited

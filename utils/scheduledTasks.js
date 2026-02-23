@@ -179,7 +179,7 @@ async function checkUsageLimits() {
     for (const org of freeOrgs) {
       const usage = await getInvoiceUsage(org._id);
 
-      // Send warning at 80% usage (4 out of 5 invoices)
+      // Send warning at 80% usage
       if (usage.used >= Math.floor(usage.limit * 0.8) && usage.remaining > 0) {
         const owner = await User.findOne({ organization: org._id, isOwner: true });
 
