@@ -78,24 +78,71 @@ exports.getSubscription = async (req, res) => {
 exports.cancelSubscription = async (req, res) => {
     try {
         const User = require('../models/User');
+        const Organization = require('../models/Organization');
+        const Subscription = require('../models/Subscription');
         const user = await User.findById(req.user._id);
 
         // Determine which subscription ID to use
         const subscriptionId = user.paddleSubscriptionId || user.polarSubscriptionId;
 
-        if (!subscriptionId) {
+        if (subscriptionId) {
+            // Cancel via payment gateway (Paddle/Polar API)
+            try {
+                const gateway = await getActiveGateway();
+                await gateway.cancelSubscription(subscriptionId);
+
+                return res.status(200).json({
+                    success: true,
+                    message: 'Subscription will be cancelled at the end of the billing period'
+                });
+            } catch (gatewayErr) {
+                console.error('[Payment] Gateway cancel error:', gatewayErr.message);
+                // If gateway fails (e.g. subscription already cancelled remotely), fall through to local cancel
+            }
+        }
+
+        // Local cancellation: no gateway subscription ID or gateway call failed
+        // Downgrade user and organization directly
+        if (user.plan !== 'pro') {
             return res.status(400).json({
                 success: false,
-                message: 'No active subscription found'
+                message: 'No active Pro subscription to cancel'
             });
         }
 
-        const gateway = await getActiveGateway();
-        const result = await gateway.cancelSubscription(subscriptionId);
+        // Downgrade user
+        user.plan = 'free';
+        user.subscriptionStatus = 'cancelled';
+        user.paddleSubscriptionId = null;
+        user.paddleCustomerId = null;
+        await user.save();
+
+        // Downgrade organization
+        const organization = await Organization.findById(user.organization);
+        if (organization) {
+            organization.subscription.plan = 'free';
+            organization.subscription.status = 'cancelled';
+
+            // Reset to free plan features
+            const freeFeatures = Subscription.plans.free.features;
+            organization.features = freeFeatures;
+            await organization.save();
+        }
+
+        // Update subscription record
+        await Subscription.findOneAndUpdate(
+            { organization: user.organization },
+            {
+                status: 'cancelled',
+                plan: 'free',
+                cancelledAt: new Date(),
+                cancelAtPeriodEnd: false
+            }
+        );
 
         res.status(200).json({
             success: true,
-            message: result.message
+            message: 'Subscription cancelled and downgraded to Free plan'
         });
     } catch (error) {
         console.error('[Payment] Cancel subscription error:', error);
