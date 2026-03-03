@@ -109,6 +109,10 @@ app.use(cors({
 
 // Raw body parsing for Paddle webhooks (must be before json parser for this route)
 app.use('/api/paddle/webhook', express.raw({ type: 'application/json' }), (req, res, next) => {
+  // Skip raw body parsing for non-POST requests (e.g., GET test endpoint)
+  if (req.method !== 'POST') {
+    return next();
+  }
   try {
     req.rawBody = req.body.toString();
     req.body = JSON.parse(req.body);
