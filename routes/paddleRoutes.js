@@ -4,6 +4,7 @@ const {
     createCheckout,
     handleWebhook,
     testWebhook,
+    verifyCheckout,
     getSubscription,
     cancelSubscription,
     updateSubscription,
@@ -24,6 +25,7 @@ router.get('/webhook', testWebhook);
 // Protected routes
 router.use(protect);
 router.post('/checkout', createCheckout);
+router.post('/verify-checkout', verifyCheckout);
 router.get('/subscription', getSubscription);
 router.post('/cancel', cancelSubscription);
 router.post('/update', updateSubscription);

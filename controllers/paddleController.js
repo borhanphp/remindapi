@@ -102,6 +102,94 @@ exports.handleWebhook = async (req, res) => {
     }
 };
 
+/**
+ * @desc    Verify a checkout transaction client-side to instantly upgrade user
+ * @route   POST /api/paddle/verify-checkout
+ * @access  Private
+ */
+exports.verifyCheckout = async (req, res) => {
+    try {
+        const { transactionId } = req.body;
+        if (!transactionId) {
+            return res.status(400).json({ success: false, message: 'Transaction ID is required' });
+        }
+
+        const { paddle } = require('../config/paddle');
+        const transaction = await paddle.transactions.get(transactionId);
+
+        if (!transaction || transaction.status !== 'completed') {
+            return res.status(400).json({ success: false, message: 'Transaction not completed' });
+        }
+
+        const subscriptionId = transaction.subscription_id;
+        if (subscriptionId) {
+            // Get detailed subscription to ensure we have the billing cycle correctly
+            const paddleSub = await paddle.subscriptions.get(subscriptionId);
+
+            // Re-use logic from handleSubscriptionUpdate, but synchronous for the user
+            const Subscription = require('../models/Subscription');
+            const Organization = require('../models/Organization');
+            const User = require('../models/User');
+
+            const user = await User.findById(req.user._id);
+            if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+            const organizationId = user.organization;
+            const organization = await Organization.findById(organizationId);
+
+            // Apply upgrade since we verified payment
+            user.plan = 'pro';
+            user.subscriptionStatus = paddleSub.status === 'active' ? 'active' : paddleSub.status;
+            user.paddleCustomerId = paddleSub.customer_id;
+            user.paddleSubscriptionId = subscriptionId;
+            if (paddleSub.billing_cycle) user.billingCycle = paddleSub.billing_cycle.interval;
+            await user.save();
+
+            if (organization) {
+                organization.subscription.plan = 'pro';
+                organization.subscription.status = 'active';
+                organization.subscription.paddleCustomerId = paddleSub.customer_id;
+                organization.subscription.paddleSubscriptionId = subscriptionId;
+                organization.subscription.currentPeriodEnd = paddleSub.current_billing_period?.ends_at ? new Date(paddleSub.current_billing_period.ends_at) : null;
+
+                const proFeatures = Subscription.plans.pro.features;
+                organization.features = {
+                    maxInvoices: proFeatures.maxInvoices,
+                    emailReminders: proFeatures.emailReminders,
+                    basicReporting: proFeatures.basicReporting,
+                    automatedSchedule: proFeatures.automatedSchedule,
+                    prioritySupport: proFeatures.prioritySupport,
+                    removeBranding: proFeatures.removeBranding
+                };
+                await organization.save();
+            }
+
+            await Subscription.findOneAndUpdate(
+                { organization: organizationId },
+                {
+                    plan: 'pro',
+                    status: 'active',
+                    currentPeriodStart: paddleSub.current_billing_period?.starts_at ? new Date(paddleSub.current_billing_period.starts_at) : new Date(),
+                    currentPeriodEnd: paddleSub.current_billing_period?.ends_at ? new Date(paddleSub.current_billing_period.ends_at) : new Date(),
+                    paddleCustomerId: paddleSub.customer_id,
+                    paddleSubscriptionId: subscriptionId,
+                    billingCycle: {
+                        interval: paddleSub.billing_cycle?.interval || 'month',
+                        frequency: paddleSub.billing_cycle?.frequency || 1
+                    },
+                    cancelAtPeriodEnd: false
+                },
+                { upsert: true, new: true }
+            );
+        }
+
+        res.status(200).json({ success: true, message: 'Checkout verified successfully' });
+    } catch (err) {
+        console.error('[Paddle] Verify checkout error:', err);
+        res.status(500).json({ success: false, message: 'Failed to verify checkout' });
+    }
+};
+
 // Helper: Handle Subscription Created/Updated
 async function handleSubscriptionUpdate(data) {
     const { custom_data, customer_id, id, status, billing_cycle, items } = data;
