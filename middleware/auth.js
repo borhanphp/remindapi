@@ -70,11 +70,11 @@ exports.protect = async (req, res, next) => {
           console.log('ℹ️ Auth: Membership role not assigned (single-user mode):', user.email);
         }
 
-        // Check organization subscription (skip for super admins)
+        // Attach subscription status for downstream middleware (don't block access)
         if (!user.isSuperAdmin && membership.organization) {
-          if (membership.organization.subscription?.status === 'cancelled') {
-            console.error('❌ Auth Error: Organization subscription cancelled:', membership.organization.name);
-            throw new ApiError(403, 'Your organization subscription has been cancelled. Please contact support to renew your subscription.');
+          if (membership.organization.subscription?.status === 'cancelled' || membership.organization.subscription?.status === 'expired') {
+            req.subscriptionInactive = true;
+            req.subscriptionStatus = membership.organization.subscription.status;
           }
         }
 
@@ -95,10 +95,11 @@ exports.protect = async (req, res, next) => {
           console.log('ℹ️ Auth: User has no role assigned (single-user mode):', user.email);
         }
 
+        // Attach subscription status for downstream middleware (don't block access)
         if (!user.isSuperAdmin && userWithOrg.organization) {
-          if (userWithOrg.organization.subscription?.status === 'cancelled') {
-            console.error('❌ Auth Error: Organization subscription cancelled:', userWithOrg.organization.name);
-            throw new ApiError(403, 'Your organization subscription has been cancelled. Please contact support to renew your subscription.');
+          if (userWithOrg.organization.subscription?.status === 'cancelled' || userWithOrg.organization.subscription?.status === 'expired') {
+            req.subscriptionInactive = true;
+            req.subscriptionStatus = userWithOrg.organization.subscription?.status;
           }
         }
 

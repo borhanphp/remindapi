@@ -89,7 +89,7 @@ exports.sendTrialExpiringEmail = async (user, organization, daysRemaining) => {
                     </div>
                     
                     <p style="color: #6B7280; font-size: 14px;">
-                        After your trial ends, you'll be moved to the Free plan (3 invoices per month).
+                        After your trial ends, you'll be moved to the Free plan (3 invoices total).
                     </p>
                     
                     <p>Best regards,<br>The ${process.env.APP_NAME || 'ZeeRemind'} Team</p>
@@ -122,7 +122,7 @@ exports.sendTrialExpiredEmail = async (user, organization) => {
                     <div style="background-color: #FEE2E2; border-left: 4px solid #DC2626; padding: 15px; margin: 20px 0;">
                         <h3 style="margin-top: 0;">Free Plan Limitations:</h3>
                         <ul style="margin-bottom: 0;">
-                            <li>3 invoices per month</li>
+                            <li>3 invoices total</li>
                             <li>Basic reporting only</li>
                             <li>Standard support</li>
                         </ul>
@@ -223,7 +223,7 @@ exports.sendSubscriptionCancelledEmail = async (user, organization, endDate) => 
                     
                     <h3>What you'll lose on the Free plan:</h3>
                     <ul>
-                        <li>❌ Unlimited invoices (only 3/month on Free)</li>
+                        <li>❌ Unlimited invoices (only 3 total on Free)</li>
                         <li>❌ Automated reminder schedules</li>
                         <li>❌ Priority support</li>
                         <li>❌ Custom branding</li>
@@ -337,5 +337,55 @@ exports.sendUsageLimitWarningEmail = async (user, organization, usage) => {
         console.log(`Usage limit warning email sent to ${user.email}`);
     } catch (error) {
         console.error('Failed to send usage limit warning email:', error);
+    }
+};
+
+/**
+ * Send subscription downgraded email (auto-downgrade after grace period)
+ */
+exports.sendSubscriptionDowngradedEmail = async (user, organization) => {
+    try {
+        await sendEmail({
+            to: user.email,
+            subject: `Your ${process.env.APP_NAME || 'ZeeRemind'} Pro Subscription Has Ended`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <h1 style="color: #DC2626;">Your Pro Subscription Has Ended</h1>
+                    
+                    <p>Hi ${user.name},</p>
+                    
+                    <p>We were unable to process your payment for "<strong>${organization.name}</strong>" and the 7-day grace period has expired. Your account has been downgraded to the Free plan.</p>
+                    
+                    <div style="background-color: #D1FAE5; border-left: 4px solid #10B981; padding: 15px; margin: 20px 0;">
+                        <h3 style="margin-top: 0; color: #10B981;">Your Data is Safe ✅</h3>
+                        <p style="margin-bottom: 0;">All your existing invoices are preserved and you can still view them. However, you won't be able to create new invoices until you re-subscribe.</p>
+                    </div>
+                    
+                    <div style="background-color: #FEE2E2; border-left: 4px solid #DC2626; padding: 15px; margin: 20px 0;">
+                        <h3 style="margin-top: 0;">What Changed:</h3>
+                        <ul style="margin-bottom: 0;">
+                            <li>❌ Cannot create new invoices (free limit of 3 exceeded)</li>
+                            <li>❌ Automated reminder schedules disabled</li>
+                            <li>❌ Priority support removed</li>
+                            <li>✅ Existing invoices are safe and viewable</li>
+                        </ul>
+                    </div>
+                    
+                    <h3>Re-subscribe to restore full access:</h3>
+                    
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="${process.env.FRONTEND_URL}/settings/billing" style="background-color: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block;">Re-subscribe to Pro - $19/month</a>
+                    </div>
+                    
+                    <p>Need help? Contact us at <a href="mailto:support@zeeremind.com">support@zeeremind.com</a></p>
+                    
+                    <p>Best regards,<br>The ${process.env.APP_NAME || 'ZeeRemind'} Team</p>
+                </div>
+            `
+        });
+
+        console.log(`Subscription downgraded email sent to ${user.email}`);
+    } catch (error) {
+        console.error('Failed to send subscription downgraded email:', error);
     }
 };

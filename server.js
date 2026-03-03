@@ -174,13 +174,6 @@ app.use('/api/subscription', require('./routes/subscriptionRoutes')); // Subscri
 app.use('/api/payment', require('./routes/paymentRoutes')); // Unified payment gateway
 app.use('/api/polar', require('./routes/polarRoutes')); // Polar.sh webhooks
 
-// Paddle Webhook (Public) - registered here to accessible
-const paddleController = require('./controllers/paddleController');
-app.post('/api/paddle/webhook', paddleController.handleWebhook);
-
-
-
-
 
 
 

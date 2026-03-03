@@ -14,19 +14,51 @@ exports.handleWebhook = async (req, res) => {
         const config = await PaymentConfig.getConfig();
 
         // Verify webhook signature
-        const signature = req.headers['webhook-id'];
         const webhookSecret = config.polar.webhookSecret;
 
-        if (webhookSecret && signature) {
-            // Polar uses standard webhook signature verification
-            // For now, we validate by checking the secret is configured
-            // In production, use Polar SDK's built-in verification
+        if (webhookSecret) {
             const crypto = require('crypto');
+            const webhookId = req.headers['webhook-id'];
+            const webhookTimestamp = req.headers['webhook-timestamp'];
             const webhookSignature = req.headers['webhook-signature'];
 
-            if (!webhookSignature) {
-                console.warn('[Polar Webhook] No webhook-signature header, proceeding with caution');
+            if (!webhookId || !webhookTimestamp || !webhookSignature) {
+                console.error('[Polar Webhook] Missing required signature headers');
+                return res.status(401).json({ error: 'Missing signature headers' });
             }
+
+            // Verify timestamp is not too old (5 minutes tolerance)
+            const now = Math.floor(Date.now() / 1000);
+            const timestamp = parseInt(webhookTimestamp, 10);
+            if (Math.abs(now - timestamp) > 300) {
+                console.error('[Polar Webhook] Timestamp too old, possible replay attack');
+                return res.status(401).json({ error: 'Timestamp too old' });
+            }
+
+            // Compute expected signature: HMAC-SHA256 of "webhookId.timestamp.body"
+            const signedContent = `${webhookId}.${webhookTimestamp}.${JSON.stringify(req.body)}`;
+            const secretBytes = Buffer.from(webhookSecret.startsWith('whsec_') ? webhookSecret.slice(6) : webhookSecret, 'base64');
+            const expectedSignature = crypto
+                .createHmac('sha256', secretBytes)
+                .update(signedContent)
+                .digest('base64');
+
+            // Polar may send multiple signatures separated by spaces (v1,signature)
+            const signatures = webhookSignature.split(' ').map(s => s.split(',')[1]).filter(Boolean);
+            const isValid = signatures.some(sig => {
+                try {
+                    return crypto.timingSafeEqual(Buffer.from(sig, 'base64'), Buffer.from(expectedSignature, 'base64'));
+                } catch {
+                    return false;
+                }
+            });
+
+            if (!isValid) {
+                console.error('[Polar Webhook] Invalid signature');
+                return res.status(401).json({ error: 'Invalid signature' });
+            }
+        } else {
+            console.warn('[Polar Webhook] No webhook secret configured — skipping verification (NOT SAFE FOR PRODUCTION)');
         }
 
         const event = req.body;
@@ -47,6 +79,17 @@ exports.handleWebhook = async (req, res) => {
             case 'subscription.canceled':
             case 'subscription.revoked':
                 await handlePolarSubscriptionCancel(data);
+                break;
+            case 'subscription.active':
+                // Polar may send subscription.active with a past_due status
+                if (data.status === 'past_due') {
+                    await handlePolarSubscriptionPastDue(data);
+                } else {
+                    await handlePolarSubscriptionUpdate(data);
+                }
+                break;
+            case 'subscription.past_due':
+                await handlePolarSubscriptionPastDue(data);
                 break;
             case 'order.paid':
             case 'checkout.completed':
@@ -208,6 +251,49 @@ async function handlePolarSubscriptionCancel(data) {
     );
 
     console.log(`[Polar Webhook] User ${user.email} subscription cancelled`);
+}
+
+/**
+ * Handle Polar subscription past due (payment failure)
+ */
+async function handlePolarSubscriptionPastDue(data) {
+    const { id, customer, metadata } = data;
+
+    let user;
+    if (metadata && metadata.userId) {
+        user = await User.findById(metadata.userId);
+    } else if (customer && customer.email) {
+        user = await User.findOne({ email: customer.email });
+    } else {
+        user = await User.findOne({ polarSubscriptionId: id });
+    }
+
+    if (!user) {
+        console.error('[Polar Webhook] User not found for past_due subscription:', id);
+        return;
+    }
+
+    // Update user status to past_due
+    user.subscriptionStatus = 'past_due';
+    await user.save();
+
+    // Update organization status
+    const organization = await Organization.findById(user.organization);
+    if (organization) {
+        organization.subscription.status = 'past_due';
+        await organization.save();
+
+        // Send payment failed email
+        await subscriptionEmailService.sendPaymentFailedEmail(user, organization);
+    }
+
+    // Update subscription record
+    await Subscription.findOneAndUpdate(
+        { organization: user.organization },
+        { status: 'past_due' }
+    );
+
+    console.log(`[Polar Webhook] User ${user.email} subscription is past_due (payment failed)`);
 }
 
 /**

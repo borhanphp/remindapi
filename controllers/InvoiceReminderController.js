@@ -46,10 +46,19 @@ exports.createInvoice = async (req, res) => {
             });
 
             if (invoiceCount >= 3) {
+                // Detect if user was previously on Pro (has more invoices than free limit)
+                const isDowngraded = invoiceCount > 3;
+                const errorMessage = isDowngraded
+                    ? `Your subscription has ended and you have ${invoiceCount} existing invoices. Your data is safe — re-subscribe to Pro to create new invoices.`
+                    : 'Free plan limit reached (3 invoices). Please upgrade to Pro for unlimited invoices.';
+
                 return res.status(403).json({
                     success: false,
-                    error: 'Free plan limit reached (3 invoices). Please upgrade to Pro for unlimited invoices.',
-                    code: 'LIMIT_REACHED'
+                    error: errorMessage,
+                    code: isDowngraded ? 'DOWNGRADED_LIMIT' : 'LIMIT_REACHED',
+                    isDowngraded,
+                    currentCount: invoiceCount,
+                    limit: 3
                 });
             }
         }

@@ -177,13 +177,13 @@ async function handleSubscriptionCancel(data) {
     if (isImmediate) {
         // Downgrade immediately
         user.plan = 'free';
-        user.subscriptionStatus = 'canceled';
+        user.subscriptionStatus = 'cancelled';
         await user.save();
 
         // Update organization
         if (organization) {
             organization.subscription.plan = 'free';
-            organization.subscription.status = 'canceled';
+            organization.subscription.status = 'cancelled';
 
             // Reset to free plan features
             const freeFeatures = Subscription.plans.free.features;
@@ -235,11 +235,28 @@ async function handleSubscriptionCancel(data) {
 // Helper: Handle Subscription Pause
 async function handleSubscriptionPause(data) {
     const { id } = data;
+    const Organization = require('../models/Organization');
+    const Subscription = require('../models/Subscription');
+
     const user = await User.findOne({ paddleSubscriptionId: id });
 
     if (user) {
         user.subscriptionStatus = 'paused';
         await user.save();
+
+        // Update organization status
+        const organization = await Organization.findById(user.organization);
+        if (organization) {
+            organization.subscription.status = 'paused';
+            await organization.save();
+        }
+
+        // Update subscription record
+        await Subscription.findOneAndUpdate(
+            { paddleSubscriptionId: id },
+            { status: 'paused' }
+        );
+
         console.log(`[Paddle Webhook] User ${user.email} subscription paused`);
     }
 }

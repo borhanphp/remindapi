@@ -23,6 +23,8 @@ exports.getSubscriptionStatus = async (organizationId) => {
             trialEndsAt: organization.subscription.trialEndsAt,
             currentPeriodEnd: organization.subscription.currentPeriodEnd,
             paddleSubscriptionId: organization.subscription.paddleSubscriptionId,
+            polarSubscriptionId: organization.subscription.polarSubscriptionId,
+            paymentProcessor: organization.subscription.paymentProcessor,
             subscriptionRecord: subscription
         };
     } catch (error) {
@@ -67,15 +69,16 @@ exports.getRemainingInvoices = async (organizationId) => {
 
         const maxInvoices = organization.features.maxInvoices || 3;
 
-        // Count invoices for current month
+        // Count ALL invoices (lifetime limit, matching checkInvoiceLimit middleware)
         const Invoice = require('../models/Invoice');
-        const startOfMonth = new Date();
-        startOfMonth.setDate(1);
-        startOfMonth.setHours(0, 0, 0, 0);
+        const InvoiceReminder = require('../models/InvoiceReminder');
+        const User = require('./subscriptionHelpers').User || require('../models/User');
 
-        const invoiceCount = await Invoice.countDocuments({
-            organization: organizationId,
-            createdAt: { $gte: startOfMonth }
+        const orgUsers = await require('../models/User').find({ organization: organizationId }).select('_id');
+        const userIds = orgUsers.map(u => u._id);
+
+        const invoiceCount = await InvoiceReminder.countDocuments({
+            userId: { $in: userIds }
         });
 
         return Math.max(0, maxInvoices - invoiceCount);

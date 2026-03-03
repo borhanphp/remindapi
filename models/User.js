@@ -136,7 +136,7 @@ const UserSchema = new mongoose.Schema(
     },
     subscriptionStatus: {
       type: String,
-      enum: ['active', 'past_due', 'canceled', 'paused', 'trialing'],
+      enum: ['active', 'past_due', 'cancelled', 'paused', 'trialing', 'expired'],
       default: 'active' // Free plan is active by default
     },
     paddleCustomerId: {

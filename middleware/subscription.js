@@ -106,12 +106,19 @@ exports.checkInvoiceLimit = async (req, res, next) => {
         });
 
         if (invoiceCount >= maxInvoices) {
+            // Detect if user was previously on Pro (has more invoices than free limit)
+            const isDowngraded = invoiceCount > maxInvoices;
+            const message = isDowngraded
+                ? `Your subscription has ended and you have ${invoiceCount} existing invoices (free limit is ${maxInvoices}). Your existing invoices are safe — upgrade to Pro to create new ones.`
+                : `You've reached your limit of ${maxInvoices} invoices. Upgrade to Pro for unlimited invoices.`;
+
             return res.status(403).json({
                 success: false,
-                message: `You've reached your limit of ${maxInvoices} invoices. Upgrade to Pro for unlimited invoices.`,
+                message,
                 currentCount: invoiceCount,
                 limit: maxInvoices,
-                requiresUpgrade: true
+                requiresUpgrade: true,
+                isDowngraded
             });
         }
 

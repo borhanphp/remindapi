@@ -24,6 +24,16 @@ function startScheduledTasks() {
     }
   });
 
+  // Expired Subscription Check — daily at midnight UTC
+  cron.schedule('0 0 * * *', async () => {
+    try {
+      console.log('[Subscription Check] Running expired subscription check...');
+      await checkExpiredSubscriptions();
+    } catch (error) {
+      console.error('Error in Expired Subscription Check:', error);
+    }
+  });
+
   // Usage Warning Check — daily at 8:00 AM UTC
   cron.schedule('0 8 * * *', async () => {
     try {
@@ -164,6 +174,92 @@ function get(obj, path) {
 }
 
 /**
+ * Check for expired subscriptions past grace period and auto-downgrade
+ */
+async function checkExpiredSubscriptions() {
+  console.log('[Subscription Check] Checking for expired subscriptions...');
+
+  try {
+    const Subscription = require('../models/Subscription');
+
+    // Find all organizations with past_due status
+    const pastDueOrgs = await Organization.find({
+      'subscription.status': 'past_due'
+    });
+
+    let downgraded = 0;
+
+    for (const org of pastDueOrgs) {
+      // Find the subscription record to get currentPeriodEnd
+      const subscription = await Subscription.findOne({
+        organization: org._id
+      }).sort({ createdAt: -1 });
+
+      if (!subscription || !subscription.currentPeriodEnd) {
+        continue;
+      }
+
+      // Calculate grace period end (7 days after currentPeriodEnd)
+      const gracePeriodEnd = new Date(subscription.currentPeriodEnd);
+      gracePeriodEnd.setDate(gracePeriodEnd.getDate() + 7);
+
+      // Check if grace period has expired
+      if (new Date() > gracePeriodEnd) {
+        console.log(`[Subscription Check] Grace period expired for org ${org.name} (${org._id}). Downgrading...`);
+
+        // Downgrade organization
+        const freeFeatures = Subscription.plans.free.features;
+        org.subscription.plan = 'free';
+        org.subscription.status = 'cancelled';
+        org.features = {
+          maxInvoices: freeFeatures.maxInvoices,
+          emailReminders: freeFeatures.emailReminders,
+          basicReporting: freeFeatures.basicReporting,
+          automatedSchedule: freeFeatures.automatedSchedule,
+          prioritySupport: freeFeatures.prioritySupport,
+          removeBranding: freeFeatures.removeBranding
+        };
+        await org.save();
+
+        // Update all users in the organization
+        await User.updateMany(
+          { organization: org._id },
+          {
+            $set: {
+              plan: 'free',
+              subscriptionStatus: 'cancelled'
+            }
+          }
+        );
+
+        // Update subscription record
+        await Subscription.findOneAndUpdate(
+          { organization: org._id },
+          {
+            status: 'cancelled',
+            cancelledAt: new Date(),
+            plan: 'free'
+          }
+        );
+
+        // Send downgrade notification email to the org owner
+        const owner = await User.findOne({ organization: org._id, isOwner: true });
+        if (owner) {
+          await subscriptionEmailService.sendSubscriptionDowngradedEmail(owner, org);
+        }
+
+        downgraded++;
+        console.log(`[Subscription Check] Org ${org.name} downgraded to FREE`);
+      }
+    }
+
+    console.log(`[Subscription Check] Checked ${pastDueOrgs.length} past_due orgs, downgraded ${downgraded}`);
+  } catch (error) {
+    console.error('[Subscription Check] Error:', error);
+  }
+}
+
+/**
  * Check usage limits and send warnings
  */
 async function checkUsageLimits() {
@@ -198,5 +294,6 @@ async function checkUsageLimits() {
 
 module.exports = {
   startScheduledTasks,
-  checkUsageLimits
+  checkUsageLimits,
+  checkExpiredSubscriptions
 };
