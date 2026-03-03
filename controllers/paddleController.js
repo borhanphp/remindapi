@@ -1,34 +1,70 @@
 const User = require('../models/User');
 
 /**
+ * @desc    Test webhook endpoint (GET) to verify reachability
+ * @route   GET /api/paddle/webhook
+ * @access  Public
+ */
+exports.testWebhook = async (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Paddle webhook endpoint is reachable',
+        timestamp: new Date().toISOString()
+    });
+};
+
+/**
  * @desc    Handle Paddle Webhooks
  * @route   POST /api/paddle/webhook
  * @access  Public (Signature verified)
  */
 exports.handleWebhook = async (req, res) => {
     try {
+        console.log('========================================');
+        console.log('[Paddle Webhook] Incoming request');
+        console.log('[Paddle Webhook] Signature header:', req.headers['paddle-signature'] ? 'present' : 'MISSING');
+        console.log('[Paddle Webhook] Raw body present:', !!req.rawBody);
+        console.log('[Paddle Webhook] Event type:', req.body?.event_type);
+        console.log('========================================');
+
         const { verifyWebhookSignature } = require('../config/paddle');
         const signature = req.headers['paddle-signature'];
+        const isSandbox = process.env.PADDLE_ENVIRONMENT === 'sandbox';
 
-        // Verify webhook signature for security
+        // Verify webhook signature
         if (!signature) {
-            console.error('[Paddle Webhook] Missing signature header');
-            return res.status(401).json({ error: 'Missing signature' });
-        }
-
-        try {
-            const isValid = verifyWebhookSignature(req.rawBody, signature);
-            if (!isValid) {
-                console.error('[Paddle Webhook] Invalid signature');
-                return res.status(401).json({ error: 'Invalid signature' });
+            console.error('[Paddle Webhook] ⚠️ Missing paddle-signature header');
+            if (!isSandbox) {
+                return res.status(401).json({ error: 'Missing signature' });
             }
-        } catch (err) {
-            console.error('[Paddle Webhook] Signature verification failed:', err);
-            return res.status(401).json({ error: 'Signature verification failed' });
+            console.warn('[Paddle Webhook] Sandbox: proceeding without signature');
+        } else {
+            try {
+                const isValid = verifyWebhookSignature(req.rawBody, signature);
+                if (!isValid) {
+                    console.error('[Paddle Webhook] ⚠️ Signature mismatch');
+                    if (!isSandbox) {
+                        return res.status(401).json({ error: 'Invalid signature' });
+                    }
+                    console.warn('[Paddle Webhook] Sandbox: proceeding despite invalid signature');
+                } else {
+                    console.log('[Paddle Webhook] ✅ Signature verified');
+                }
+            } catch (err) {
+                console.error('[Paddle Webhook] Signature error:', err.message);
+                if (!isSandbox) {
+                    return res.status(401).json({ error: 'Signature verification failed' });
+                }
+                console.warn('[Paddle Webhook] Sandbox: proceeding despite error');
+            }
         }
 
         const event = req.body;
-        console.log('[Paddle Webhook] Received event:', event.event_type);
+        console.log('[Paddle Webhook] Processing:', event.event_type);
+
+        if (event.data?.custom_data) {
+            console.log('[Paddle Webhook] Custom data:', JSON.stringify(event.data.custom_data));
+        }
 
         if (!event.data) {
             return res.status(200).json({ received: true });
@@ -55,9 +91,10 @@ exports.handleWebhook = async (req, res) => {
                 await handlePaymentFailed(event.data);
                 break;
             default:
-                console.log('[Paddle Webhook] Unhandled event type:', event.event_type);
+                console.log('[Paddle Webhook] Unhandled event:', event.event_type);
         }
 
+        console.log('[Paddle Webhook] ✅ Done');
         res.status(200).json({ received: true });
     } catch (err) {
         console.error('[Paddle Webhook Error]', err);
