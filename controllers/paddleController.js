@@ -109,35 +109,51 @@ exports.handleWebhook = async (req, res) => {
  */
 exports.verifyCheckout = async (req, res) => {
     try {
+        console.log('\n[Paddle Verify] ---------- START VERIFY ENDPOINT ----------');
         const { transactionId } = req.body;
+        console.log('[Paddle Verify] Received transactionId:', transactionId);
+
         if (!transactionId) {
+            console.error('[Paddle Verify] Missing transactionId in body');
             return res.status(400).json({ success: false, message: 'Transaction ID is required' });
         }
 
         const { paddle } = require('../config/paddle');
+        console.log('[Paddle Verify] Fetching transaction from Paddle API...');
         const transaction = await paddle.transactions.get(transactionId);
+        console.log(`[Paddle Verify] Transaction fetched. Status: ${transaction?.status}, Subscription ID: ${transaction?.subscription_id}`);
 
         if (!transaction || transaction.status !== 'completed') {
-            return res.status(400).json({ success: false, message: 'Transaction not completed' });
+            console.error(`[Paddle Verify] Transaction not completed. Status is: ${transaction?.status}`);
+            return res.status(400).json({ success: false, message: 'Transaction not completed', status: transaction?.status });
         }
 
         const subscriptionId = transaction.subscription_id;
+
         if (subscriptionId) {
             // Get detailed subscription to ensure we have the billing cycle correctly
+            console.log(`[Paddle Verify] Fetching subscription details for ${subscriptionId}...`);
             const paddleSub = await paddle.subscriptions.get(subscriptionId);
+            console.log(`[Paddle Verify] Subscription fetched. Status: ${paddleSub?.status}`);
 
             // Re-use logic from handleSubscriptionUpdate, but synchronous for the user
             const Subscription = require('../models/Subscription');
             const Organization = require('../models/Organization');
             const User = require('../models/User');
 
+            console.log(`[Paddle Verify] Looking up user: ${req.user._id}`);
             const user = await User.findById(req.user._id);
-            if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+            if (!user) {
+                console.error('[Paddle Verify] User not found in DB');
+                return res.status(404).json({ success: false, message: 'User not found' });
+            }
 
             const organizationId = user.organization;
+            console.log(`[Paddle Verify] Looking up organization: ${organizationId}`);
             const organization = await Organization.findById(organizationId);
 
             // Apply upgrade since we verified payment
+            console.log('[Paddle Verify] Applying upgrade locally...');
             user.plan = 'pro';
             user.subscriptionStatus = paddleSub.status === 'active' ? 'active' : paddleSub.status;
             user.paddleCustomerId = paddleSub.customer_id;
