@@ -112,7 +112,7 @@ exports.cancelSubscription = async (req, res) => {
 
         // Downgrade user
         user.plan = 'free';
-        user.subscriptionStatus = 'cancelled';
+        user.subscriptionStatus = 'active'; // Keep active on free plan (cancelled blocks login)
         user.paddleSubscriptionId = null;
         user.paddleCustomerId = null;
         await user.save();
@@ -121,7 +121,7 @@ exports.cancelSubscription = async (req, res) => {
         const organization = await Organization.findById(user.organization);
         if (organization) {
             organization.subscription.plan = 'free';
-            organization.subscription.status = 'cancelled';
+            organization.subscription.status = 'active'; // Keep active on free plan (cancelled blocks login)
 
             // Reset to free plan features
             const freeFeatures = Subscription.plans.free.features;
