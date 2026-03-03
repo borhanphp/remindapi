@@ -36,7 +36,8 @@ class PaddleGateway extends PaymentGateway {
                 customData: {
                     userId: user._id.toString(),
                     organizationId: organizationId.toString()
-                }
+                },
+                environment: process.env.PADDLE_ENVIRONMENT || 'sandbox'
             }
         };
     }
