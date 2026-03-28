@@ -223,7 +223,14 @@ exports.updateInvoice = async (req, res) => {
             });
         }
 
-        invoice = await InvoiceReminder.findByIdAndUpdate(req.params.id, req.body, {
+        // Pro-only: strip SMS/WhatsApp from updates for free users (same as createInvoice)
+        let body = { ...req.body };
+        if (req.user.plan === 'free' && body.reminderChannels) {
+            body.reminderChannels = body.reminderChannels.filter((ch) => ch === 'email');
+            if (body.reminderChannels.length === 0) body.reminderChannels = ['email'];
+        }
+
+        invoice = await InvoiceReminder.findByIdAndUpdate(req.params.id, body, {
             new: true,
             runValidators: true
         });
@@ -308,7 +315,11 @@ exports.sendManualReminder = async (req, res) => {
         const invoiceRef = invoice.invoiceNumber ? `#${invoice.invoiceNumber}` : '';
         const invoiceDisplay = invoiceRef ? ` ${invoiceRef}` : '';
         const paymentLink = invoice.paymentLink;
-        const channels = invoice.reminderChannels || ['email'];
+        let channels = invoice.reminderChannels || ['email'];
+        if (req.user.plan === 'free') {
+            channels = channels.filter((ch) => ch === 'email');
+            if (channels.length === 0) channels = ['email'];
+        }
         const results = [];
 
         console.log('📤 Sending manual reminder:');
@@ -446,7 +457,12 @@ exports.checkAndSendReminders = async () => {
                     const invoiceDisplay = invoiceRef ? ` ${invoiceRef}` : '';
                     const invoiceRefHtml = invoiceRef ? ` <strong>${invoiceRef}</strong>` : '';
                     const paymentLink = invoice.paymentLink;
-                    const channels = invoice.reminderChannels || ['email'];
+                    let channels = invoice.reminderChannels || ['email'];
+                    const ownerPlan = invoice.userId?.plan || 'free';
+                    if (ownerPlan === 'free') {
+                        channels = channels.filter((ch) => ch === 'email');
+                        if (channels.length === 0) channels = ['email'];
+                    }
                     const logType = reminderType.startsWith('after_due') ? 'after_due' : reminderType;
 
                     let subject = `Reminder: Invoice${invoiceDisplay} from ${senderName}`;
