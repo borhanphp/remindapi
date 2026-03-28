@@ -110,6 +110,8 @@ exports.handleWebhook = async (req, res) => {
 exports.verifyCheckout = async (req, res) => {
     try {
         console.log('\n[Paddle Verify] ---------- START VERIFY ENDPOINT ----------');
+        console.log('[Paddle Verify] Request Headers:', req.headers);
+        console.log('[Paddle Verify] Request Body:', req.body);
         const { transactionId } = req.body;
         console.log('[Paddle Verify] Received transactionId:', transactionId);
 
@@ -121,83 +123,99 @@ exports.verifyCheckout = async (req, res) => {
         const { paddle } = require('../config/paddle');
         console.log('[Paddle Verify] Fetching transaction from Paddle API...');
         const transaction = await paddle.transactions.get(transactionId);
-        console.log(`[Paddle Verify] Transaction fetched. Status: ${transaction?.status}, Subscription ID: ${transaction?.subscription_id}`);
+        // Paddle Node SDK returns entities with camelCase (subscriptionId), not raw API snake_case
+        const subscriptionId = transaction.subscriptionId;
+        console.log(`[Paddle Verify] Transaction fetched. Status: ${transaction?.status}, Subscription ID: ${subscriptionId}`);
 
-        if (!transaction || transaction.status !== 'completed') {
-            console.error(`[Paddle Verify] Transaction not completed. Status is: ${transaction?.status}`);
+        const paidStatuses = ['completed', 'paid'];
+        if (!transaction || !paidStatuses.includes(transaction.status)) {
+            console.error(`[Paddle Verify] Transaction not in a paid state. Status is: ${transaction?.status}`);
             return res.status(400).json({ success: false, message: 'Transaction not completed', status: transaction?.status });
         }
 
-        const subscriptionId = transaction.subscription_id;
-
-        if (subscriptionId) {
-            // Get detailed subscription to ensure we have the billing cycle correctly
-            console.log(`[Paddle Verify] Fetching subscription details for ${subscriptionId}...`);
-            const paddleSub = await paddle.subscriptions.get(subscriptionId);
-            console.log(`[Paddle Verify] Subscription fetched. Status: ${paddleSub?.status}`);
-
-            // Re-use logic from handleSubscriptionUpdate, but synchronous for the user
-            const Subscription = require('../models/Subscription');
-            const Organization = require('../models/Organization');
-            const User = require('../models/User');
-
-            console.log(`[Paddle Verify] Looking up user: ${req.user._id}`);
-            const user = await User.findById(req.user._id);
-            if (!user) {
-                console.error('[Paddle Verify] User not found in DB');
-                return res.status(404).json({ success: false, message: 'User not found' });
-            }
-
-            const organizationId = user.organization;
-            console.log(`[Paddle Verify] Looking up organization: ${organizationId}`);
-            const organization = await Organization.findById(organizationId);
-
-            // Apply upgrade since we verified payment
-            console.log('[Paddle Verify] Applying upgrade locally...');
-            user.plan = 'pro';
-            user.subscriptionStatus = paddleSub.status === 'active' ? 'active' : paddleSub.status;
-            user.paddleCustomerId = paddleSub.customer_id;
-            user.paddleSubscriptionId = subscriptionId;
-            if (paddleSub.billing_cycle) user.billingCycle = paddleSub.billing_cycle.interval;
-            await user.save();
-
-            if (organization) {
-                organization.subscription.plan = 'pro';
-                organization.subscription.status = 'active';
-                organization.subscription.paddleCustomerId = paddleSub.customer_id;
-                organization.subscription.paddleSubscriptionId = subscriptionId;
-                organization.subscription.currentPeriodEnd = paddleSub.current_billing_period?.ends_at ? new Date(paddleSub.current_billing_period.ends_at) : null;
-
-                const proFeatures = Subscription.plans.pro.features;
-                organization.features = {
-                    maxInvoices: proFeatures.maxInvoices,
-                    emailReminders: proFeatures.emailReminders,
-                    basicReporting: proFeatures.basicReporting,
-                    automatedSchedule: proFeatures.automatedSchedule,
-                    prioritySupport: proFeatures.prioritySupport,
-                    removeBranding: proFeatures.removeBranding
-                };
-                await organization.save();
-            }
-
-            await Subscription.findOneAndUpdate(
-                { organization: organizationId },
-                {
-                    plan: 'pro',
-                    status: 'active',
-                    currentPeriodStart: paddleSub.current_billing_period?.starts_at ? new Date(paddleSub.current_billing_period.starts_at) : new Date(),
-                    currentPeriodEnd: paddleSub.current_billing_period?.ends_at ? new Date(paddleSub.current_billing_period.ends_at) : new Date(),
-                    paddleCustomerId: paddleSub.customer_id,
-                    paddleSubscriptionId: subscriptionId,
-                    billingCycle: {
-                        interval: paddleSub.billing_cycle?.interval || 'month',
-                        frequency: paddleSub.billing_cycle?.frequency || 1
-                    },
-                    cancelAtPeriodEnd: false
-                },
-                { upsert: true, new: true }
-            );
+        if (!subscriptionId) {
+            console.error('[Paddle Verify] Paid transaction has no subscriptionId yet');
+            return res.status(400).json({
+                success: false,
+                message: 'Subscription is not linked to this transaction yet. Please wait a few seconds and refresh, or contact support if this persists.'
+            });
         }
+
+        // Get detailed subscription to ensure we have the billing cycle correctly
+        console.log(`[Paddle Verify] Fetching subscription details for ${subscriptionId}...`);
+        const paddleSub = await paddle.subscriptions.get(subscriptionId);
+        console.log(`[Paddle Verify] Subscription fetched. Status: ${paddleSub?.status}`);
+
+        const Subscription = require('../models/Subscription');
+        const Organization = require('../models/Organization');
+        const User = require('../models/User');
+
+        console.log(`[Paddle Verify] Looking up user: ${req.user._id}`);
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            console.error('[Paddle Verify] User not found in DB');
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const organizationId = user.organization;
+        console.log(`[Paddle Verify] Looking up organization: ${organizationId}`);
+        const organization = await Organization.findById(organizationId);
+
+        const periodStart = paddleSub.currentBillingPeriod?.startsAt
+            ? new Date(paddleSub.currentBillingPeriod.startsAt)
+            : new Date();
+        const periodEnd = paddleSub.currentBillingPeriod?.endsAt
+            ? new Date(paddleSub.currentBillingPeriod.endsAt)
+            : new Date();
+
+        // Apply upgrade since we verified payment
+        console.log('[Paddle Verify] Applying upgrade locally...');
+        user.plan = 'pro';
+        user.subscriptionStatus = paddleSub.status === 'active' ? 'active' : paddleSub.status;
+        user.paddleCustomerId = paddleSub.customerId;
+        user.paddleSubscriptionId = subscriptionId;
+        if (paddleSub.billingCycle) user.billingCycle = paddleSub.billingCycle.interval;
+        await user.save();
+
+        if (organization) {
+            organization.subscription.plan = 'pro';
+            organization.subscription.status = 'active';
+            organization.subscription.paddleCustomerId = paddleSub.customerId;
+            organization.subscription.paddleSubscriptionId = subscriptionId;
+            organization.subscription.currentPeriodEnd = paddleSub.currentBillingPeriod?.endsAt
+                ? new Date(paddleSub.currentBillingPeriod.endsAt)
+                : null;
+
+            const proFeatures = Subscription.plans.pro.features;
+            organization.features = {
+                maxInvoices: proFeatures.maxInvoices,
+                emailReminders: proFeatures.emailReminders,
+                basicReporting: proFeatures.basicReporting,
+                automatedSchedule: proFeatures.automatedSchedule,
+                prioritySupport: proFeatures.prioritySupport,
+                removeBranding: proFeatures.removeBranding
+            };
+            await organization.save();
+        }
+
+        await Subscription.findOneAndUpdate(
+            { organization: organizationId },
+            {
+                plan: 'pro',
+                status: 'active',
+                currentPeriodStart: periodStart,
+                currentPeriodEnd: periodEnd,
+                paddleCustomerId: paddleSub.customerId,
+                paddleSubscriptionId: subscriptionId,
+                billingCycle: {
+                    interval: paddleSub.billingCycle?.interval || 'month',
+                    frequency: paddleSub.billingCycle?.frequency || 1
+                },
+                nextBilledAt: paddleSub.nextBilledAt ? new Date(paddleSub.nextBilledAt) : null,
+                cancelAtPeriodEnd: false
+            },
+            { upsert: true, new: true }
+        );
 
         res.status(200).json({ success: true, message: 'Checkout verified successfully' });
     } catch (err) {

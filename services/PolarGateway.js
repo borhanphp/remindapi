@@ -50,7 +50,8 @@ class PolarGateway extends PaymentGateway {
         // Create a Polar checkout session
         const checkout = await this.polar.checkouts.create({
             products: [productId],
-            successUrl: `${process.env.FRONTEND_URL}/dashboard/settings/billing?success=true`,
+            // App route is /settings/billing (no /dashboard prefix)
+            successUrl: `${(process.env.FRONTEND_URL || '').replace(/\/$/, '')}/settings/billing?success=true`,
             customerEmail: user.email,
             metadata: {
                 userId: String(user._id),

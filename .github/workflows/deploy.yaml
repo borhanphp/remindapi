@@ -1,0 +1,49 @@
+name: Deploy API to Production
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # Using Node 20 as standard
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      # Uncomment if you add testing scripts in the future
+      # - name: Run tests
+      #   run: npm test
+
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            # Navigate to the API application folder
+            cd /path/to/your/app/invoice-reminder-api
+            
+            # Pull latest code from the repository
+            git pull origin main
+            
+            # Install production dependencies
+            npm install
+            
+            # Restart the Node.js application (assuming PM2 is used)
+            # Replace 'zeeremind-api' with the actual PM2 process name you have configured
+            pm2 restart zeeremind-api || pm2 start server.js --name "zeeremind-api"
