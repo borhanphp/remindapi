@@ -2,6 +2,21 @@ const User = require('../models/User');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Paddle API uses month/year; User.billingCycle enum is monthly/yearly */
+function mapPaddleIntervalToUserBillingCycle(interval) {
+    if (!interval) return undefined;
+    if (interval === 'month') return 'monthly';
+    if (interval === 'year') return 'yearly';
+    return undefined;
+}
+
+/** Keep User.subscriptionStatus within schema enum */
+function mapPaddleStatusToUserSubscriptionStatus(status) {
+    const allowed = new Set(['active', 'past_due', 'cancelled', 'paused', 'trialing', 'expired']);
+    if (status && allowed.has(status)) return status;
+    return 'active';
+}
+
 /** Paddle transaction statuses that mean payment succeeded (see TransactionStatus in @paddle/paddle-node-sdk) */
 const PAID_TRANSACTION_STATUSES = ['billed', 'paid', 'completed'];
 
@@ -156,7 +171,7 @@ exports.verifyCheckout = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Transaction ID is required' });
         }
 
-        const { paddle } = require('../config/paddle');
+        const { paddle, fetchSubscriptionDataRaw } = require('../config/paddle');
         console.log('[Paddle Verify] Fetching transaction from Paddle API (with retry until subscription is linked)...');
         const { transaction, error: pollError } = await getTransactionReadyForVerify(paddle, transactionId);
 
@@ -188,14 +203,30 @@ exports.verifyCheckout = async (req, res) => {
             });
         }
 
-        // Get detailed subscription to ensure we have the billing cycle correctly
-        console.log(`[Paddle Verify] Fetching subscription details for ${subscriptionId}...`);
-        const paddleSub = await paddle.subscriptions.get(subscriptionId);
-        console.log(`[Paddle Verify] Subscription fetched. Status: ${paddleSub?.status}`);
+        // Use raw REST JSON — paddle.subscriptions.get() can throw when billing_cycle/items are still null (SDK entity bug)
+        console.log(`[Paddle Verify] Fetching subscription JSON for ${subscriptionId}...`);
+        let rawSub;
+        try {
+            rawSub = await fetchSubscriptionDataRaw(subscriptionId);
+        } catch (fetchErr) {
+            console.error('[Paddle Verify] fetchSubscriptionDataRaw failed:', fetchErr.message);
+            throw fetchErr;
+        }
+        console.log(`[Paddle Verify] Subscription raw status: ${rawSub?.status}`);
 
         const Subscription = require('../models/Subscription');
         const Organization = require('../models/Organization');
         const User = require('../models/User');
+
+        const customerId = rawSub.customer_id || null;
+        const subStatus = mapPaddleStatusToUserSubscriptionStatus(rawSub.status);
+        const cbp = rawSub.current_billing_period;
+        const bc = rawSub.billing_cycle;
+        const userBillingCycle = mapPaddleIntervalToUserBillingCycle(bc?.interval);
+
+        const periodStart = cbp?.starts_at ? new Date(cbp.starts_at) : new Date();
+        const periodEnd = cbp?.ends_at ? new Date(cbp.ends_at) : new Date();
+        const nextBilledAt = rawSub.next_billed_at ? new Date(rawSub.next_billed_at) : null;
 
         console.log(`[Paddle Verify] Looking up user: ${req.user._id}`);
         const user = await User.findById(req.user._id);
@@ -208,30 +239,21 @@ exports.verifyCheckout = async (req, res) => {
         console.log(`[Paddle Verify] Looking up organization: ${organizationId}`);
         const organization = await Organization.findById(organizationId);
 
-        const periodStart = paddleSub.currentBillingPeriod?.startsAt
-            ? new Date(paddleSub.currentBillingPeriod.startsAt)
-            : new Date();
-        const periodEnd = paddleSub.currentBillingPeriod?.endsAt
-            ? new Date(paddleSub.currentBillingPeriod.endsAt)
-            : new Date();
-
         // Apply upgrade since we verified payment
         console.log('[Paddle Verify] Applying upgrade locally...');
         user.plan = 'pro';
-        user.subscriptionStatus = paddleSub.status === 'active' ? 'active' : paddleSub.status;
-        user.paddleCustomerId = paddleSub.customerId;
+        user.subscriptionStatus = subStatus;
+        user.paddleCustomerId = customerId;
         user.paddleSubscriptionId = subscriptionId;
-        if (paddleSub.billingCycle) user.billingCycle = paddleSub.billingCycle.interval;
+        if (userBillingCycle) user.billingCycle = userBillingCycle;
         await user.save();
 
         if (organization) {
             organization.subscription.plan = 'pro';
             organization.subscription.status = 'active';
-            organization.subscription.paddleCustomerId = paddleSub.customerId;
+            organization.subscription.paddleCustomerId = customerId;
             organization.subscription.paddleSubscriptionId = subscriptionId;
-            organization.subscription.currentPeriodEnd = paddleSub.currentBillingPeriod?.endsAt
-                ? new Date(paddleSub.currentBillingPeriod.endsAt)
-                : null;
+            organization.subscription.currentPeriodEnd = cbp?.ends_at ? new Date(cbp.ends_at) : null;
 
             const proFeatures = Subscription.plans.pro.features;
             organization.features = {
@@ -252,13 +274,13 @@ exports.verifyCheckout = async (req, res) => {
                 status: 'active',
                 currentPeriodStart: periodStart,
                 currentPeriodEnd: periodEnd,
-                paddleCustomerId: paddleSub.customerId,
+                paddleCustomerId: customerId,
                 paddleSubscriptionId: subscriptionId,
                 billingCycle: {
-                    interval: paddleSub.billingCycle?.interval || 'month',
-                    frequency: paddleSub.billingCycle?.frequency || 1
+                    interval: bc?.interval === 'year' ? 'year' : 'month',
+                    frequency: bc?.frequency ?? 1
                 },
-                nextBilledAt: paddleSub.nextBilledAt ? new Date(paddleSub.nextBilledAt) : null,
+                nextBilledAt,
                 cancelAtPeriodEnd: false
             },
             { upsert: true, new: true }
@@ -267,7 +289,12 @@ exports.verifyCheckout = async (req, res) => {
         res.status(200).json({ success: true, message: 'Checkout verified successfully' });
     } catch (err) {
         console.error('[Paddle] Verify checkout error:', err);
-        res.status(500).json({ success: false, message: 'Failed to verify checkout' });
+        const message = err?.message || 'Failed to verify checkout';
+        res.status(500).json({
+            success: false,
+            message,
+            ...(process.env.NODE_ENV === 'development' && { stack: err?.stack })
+        });
     }
 };
 

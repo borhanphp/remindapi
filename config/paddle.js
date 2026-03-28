@@ -77,10 +77,43 @@ const getPriceIdForPlan = (plan) => {
     throw new Error(`Unknown plan: ${plan}. Available plans: free, pro`);
 };
 
+/**
+ * Fetch subscription JSON from Paddle REST API without instantiating the SDK Subscription entity.
+ * The SDK's Subscription class throws if billing_cycle or items are missing — common immediately after checkout.
+ */
+async function fetchSubscriptionDataRaw(subscriptionId) {
+    if (!process.env.PADDLE_API_KEY) {
+        throw new Error('PADDLE_API_KEY is not configured');
+    }
+    const isProd = process.env.PADDLE_ENVIRONMENT === 'production';
+    const base = isProd ? 'https://api.paddle.com' : 'https://sandbox-api.paddle.com';
+    const url = `${base}/subscriptions/${encodeURIComponent(subscriptionId)}`;
+    const res = await fetch(url, {
+        headers: {
+            Authorization: `Bearer ${process.env.PADDLE_API_KEY}`,
+            'Content-Type': 'application/json'
+        }
+    });
+    const text = await res.text();
+    let json;
+    try {
+        json = text ? JSON.parse(text) : {};
+    } catch {
+        throw new Error(`Paddle subscription response was not JSON (${res.status}): ${text.slice(0, 200)}`);
+    }
+    if (!res.ok) {
+        throw new Error(
+            json?.error?.detail || json?.error?.message || `Paddle API ${res.status}: ${text.slice(0, 300)}`
+        );
+    }
+    return json.data != null ? json.data : json;
+}
+
 module.exports = {
     paddle,
     verifyWebhookSignature,
     getPriceIdForPlan,
     PADDLE_PRO_PRICE_ID,
-    paddleEnvironment
+    paddleEnvironment,
+    fetchSubscriptionDataRaw
 };
