@@ -1,5 +1,41 @@
 const User = require('../models/User');
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Paddle transaction statuses that mean payment succeeded (see TransactionStatus in @paddle/paddle-node-sdk) */
+const PAID_TRANSACTION_STATUSES = ['billed', 'paid', 'completed'];
+
+/**
+ * Fetch transaction until subscription is linked and status is paid — API can lag checkout.completed by 1–30s.
+ */
+async function getTransactionReadyForVerify(paddle, transactionId) {
+    const maxAttempts = 35;
+    const intervalMs = 1000;
+    let last = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const transaction = await paddle.transactions.get(transactionId);
+        last = transaction;
+
+        if (transaction.status === 'canceled') {
+            return { transaction, error: 'canceled' };
+        }
+
+        const hasSubscription = Boolean(transaction.subscriptionId);
+        const paid = PAID_TRANSACTION_STATUSES.includes(transaction.status);
+
+        if (hasSubscription && paid) {
+            return { transaction };
+        }
+
+        if (attempt < maxAttempts - 1) {
+            await delay(intervalMs);
+        }
+    }
+
+    return { transaction: last, error: last ? 'timeout' : 'missing' };
+}
+
 /**
  * @desc    Test webhook endpoint (GET) to verify reachability
  * @route   GET /api/paddle/webhook
@@ -121,23 +157,34 @@ exports.verifyCheckout = async (req, res) => {
         }
 
         const { paddle } = require('../config/paddle');
-        console.log('[Paddle Verify] Fetching transaction from Paddle API...');
-        const transaction = await paddle.transactions.get(transactionId);
-        // Paddle Node SDK returns entities with camelCase (subscriptionId), not raw API snake_case
-        const subscriptionId = transaction.subscriptionId;
-        console.log(`[Paddle Verify] Transaction fetched. Status: ${transaction?.status}, Subscription ID: ${subscriptionId}`);
+        console.log('[Paddle Verify] Fetching transaction from Paddle API (with retry until subscription is linked)...');
+        const { transaction, error: pollError } = await getTransactionReadyForVerify(paddle, transactionId);
 
-        const paidStatuses = ['completed', 'paid'];
-        if (!transaction || !paidStatuses.includes(transaction.status)) {
-            console.error(`[Paddle Verify] Transaction not in a paid state. Status is: ${transaction?.status}`);
-            return res.status(400).json({ success: false, message: 'Transaction not completed', status: transaction?.status });
+        if (!transaction) {
+            return res.status(400).json({ success: false, message: 'Transaction not found' });
+        }
+
+        if (pollError === 'canceled') {
+            return res.status(400).json({ success: false, message: 'Transaction was canceled', status: transaction.status });
+        }
+
+        const subscriptionId = transaction.subscriptionId;
+        console.log(`[Paddle Verify] Transaction resolved. Status: ${transaction.status}, Subscription ID: ${subscriptionId}, pollError: ${pollError || 'none'}`);
+
+        if (!PAID_TRANSACTION_STATUSES.includes(transaction.status)) {
+            console.error(`[Paddle Verify] Transaction not in a paid state after retries. Status is: ${transaction?.status}`);
+            return res.status(400).json({
+                success: false,
+                message: 'Transaction not completed',
+                status: transaction?.status
+            });
         }
 
         if (!subscriptionId) {
-            console.error('[Paddle Verify] Paid transaction has no subscriptionId yet');
+            console.error('[Paddle Verify] Paid transaction has no subscriptionId after retries');
             return res.status(400).json({
                 success: false,
-                message: 'Subscription is not linked to this transaction yet. Please wait a few seconds and refresh, or contact support if this persists.'
+                message: 'Subscription is not linked to this transaction yet. Please wait a minute and refresh, or contact support if this persists.'
             });
         }
 
