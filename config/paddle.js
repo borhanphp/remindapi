@@ -77,35 +77,62 @@ const getPriceIdForPlan = (plan) => {
     throw new Error(`Unknown plan: ${plan}. Available plans: free, pro`);
 };
 
+const crypto = require('crypto');
+
 /**
- * Fetch subscription JSON from Paddle REST API without instantiating the SDK Subscription entity.
- * The SDK's Subscription class throws if billing_cycle or items are missing — common immediately after checkout.
+ * GET /transactions/{id} using the same auth style as Paddle docs (Bearer + Paddle-Version).
+ * The Node SDK uses lowercase "bearer"; some setups work better with documented "Bearer".
+ * Returns the `data` object from the API JSON (snake_case fields).
  */
-async function fetchSubscriptionDataRaw(subscriptionId) {
-    if (!process.env.PADDLE_API_KEY) {
-        throw new Error('PADDLE_API_KEY is not configured');
+async function fetchTransactionJsonRaw(transactionId) {
+    const key = process.env.PADDLE_API_KEY?.trim();
+    if (!key) {
+        const err = new Error('PADDLE_API_KEY is not configured');
+        err.code = 'PADDLE_CONFIG';
+        throw err;
     }
+
     const isProd = process.env.PADDLE_ENVIRONMENT === 'production';
     const base = isProd ? 'https://api.paddle.com' : 'https://sandbox-api.paddle.com';
-    const url = `${base}/subscriptions/${encodeURIComponent(subscriptionId)}`;
+    const url = `${base}/transactions/${encodeURIComponent(transactionId)}`;
+
     const res = await fetch(url, {
         headers: {
-            Authorization: `Bearer ${process.env.PADDLE_API_KEY}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            'Paddle-Version': '1',
+            'X-Transaction-ID': crypto.randomUUID()
         }
     });
+
     const text = await res.text();
     let json;
     try {
         json = text ? JSON.parse(text) : {};
     } catch {
-        throw new Error(`Paddle subscription response was not JSON (${res.status}): ${text.slice(0, 200)}`);
+        const err = new Error(`Paddle transaction response was not JSON (${res.status}): ${text.slice(0, 200)}`);
+        err.code = 'PADDLE_BAD_RESPONSE';
+        throw err;
     }
+
+    if (res.status === 403) {
+        const detail = json?.error?.detail || json?.error?.message || 'Forbidden';
+        const msg = typeof detail === 'string' ? detail : JSON.stringify(detail);
+        const err = new Error(msg);
+        err.code = 'PADDLE_FORBIDDEN';
+        err.status = 403;
+        throw err;
+    }
+
     if (!res.ok) {
-        throw new Error(
-            json?.error?.detail || json?.error?.message || `Paddle API ${res.status}: ${text.slice(0, 300)}`
-        );
+        const detail = json?.error?.detail || json?.error?.message || text.slice(0, 400);
+        const msg = typeof detail === 'string' ? detail : JSON.stringify(detail);
+        const err = new Error(msg);
+        err.code = 'PADDLE_API_ERROR';
+        err.status = res.status;
+        throw err;
     }
+
     return json.data != null ? json.data : json;
 }
 
@@ -115,5 +142,5 @@ module.exports = {
     getPriceIdForPlan,
     PADDLE_PRO_PRICE_ID,
     paddleEnvironment,
-    fetchSubscriptionDataRaw
+    fetchTransactionJsonRaw
 };

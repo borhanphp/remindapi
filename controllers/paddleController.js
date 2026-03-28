@@ -10,26 +10,51 @@ function mapPaddleIntervalToUserBillingCycle(interval) {
     return undefined;
 }
 
-/** Keep User.subscriptionStatus within schema enum */
-function mapPaddleStatusToUserSubscriptionStatus(status) {
-    const allowed = new Set(['active', 'past_due', 'cancelled', 'paused', 'trialing', 'expired']);
-    if (status && allowed.has(status)) return status;
-    return 'active';
-}
-
 /** Paddle transaction statuses that mean payment succeeded (see TransactionStatus in @paddle/paddle-node-sdk) */
 const PAID_TRANSACTION_STATUSES = ['billed', 'paid', 'completed'];
 
 /**
- * Fetch transaction until subscription is linked and status is paid — API can lag checkout.completed by 1–30s.
+ * Normalize Paddle REST `data` (snake_case) for verify logic — avoids SDK entity parsing errors.
  */
-async function getTransactionReadyForVerify(paddle, transactionId) {
+function normalizeTransactionFromPaddleJson(raw) {
+    if (!raw) return null;
+    const bp = raw.billing_period;
+    const priceBc = raw.items?.[0]?.price?.billing_cycle;
+    return {
+        subscriptionId: raw.subscription_id || null,
+        customerId: raw.customer_id || null,
+        status: raw.status,
+        billingPeriod: bp
+            ? { startsAt: bp.starts_at, endsAt: bp.ends_at }
+            : null,
+        priceBilling: priceBc
+            ? { interval: priceBc.interval, frequency: priceBc.frequency }
+            : null
+    };
+}
+
+/**
+ * Fetch transaction until subscription is linked and status is paid — API can lag checkout.completed by 1–30s.
+ * Uses raw REST + Bearer auth (see fetchTransactionJsonRaw); SDK .get() can 403 with restricted keys.
+ */
+async function getTransactionReadyForVerify(transactionId) {
+    const { fetchTransactionJsonRaw } = require('../config/paddle');
     const maxAttempts = 35;
     const intervalMs = 1000;
     let last = null;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const transaction = await paddle.transactions.get(transactionId);
+        let raw;
+        try {
+            raw = await fetchTransactionJsonRaw(transactionId);
+        } catch (err) {
+            if (err.code === 'PADDLE_FORBIDDEN') {
+                return { transaction: null, error: 'forbidden' };
+            }
+            throw err;
+        }
+
+        const transaction = normalizeTransactionFromPaddleJson(raw);
         last = transaction;
 
         if (transaction.status === 'canceled') {
@@ -171,9 +196,23 @@ exports.verifyCheckout = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Transaction ID is required' });
         }
 
-        const { paddle, fetchSubscriptionDataRaw } = require('../config/paddle');
         console.log('[Paddle Verify] Fetching transaction from Paddle API (with retry until subscription is linked)...');
-        const { transaction, error: pollError } = await getTransactionReadyForVerify(paddle, transactionId);
+        const { transaction, error: pollError } = await getTransactionReadyForVerify(transactionId);
+
+        if (pollError === 'forbidden') {
+            console.warn(
+                '[Paddle Verify] GET /transactions returned 403 — check API key has Transaction read, ' +
+                    'and PADDLE_ENVIRONMENT matches checkout (sandbox vs live). Returning deferred; webhooks may still activate Pro.'
+            );
+            return res.status(200).json({
+                success: true,
+                deferred: true,
+                message:
+                    'Could not read the transaction from Paddle (API key permissions or environment mismatch). ' +
+                    'Ensure your server uses a Paddle API key (pdl_…apikey_…) with Transaction read access, ' +
+                    'and that PADDLE_ENVIRONMENT matches your checkout. Your plan may still update via webhook within a minute.'
+            });
+        }
 
         if (!transaction) {
             return res.status(400).json({ success: false, message: 'Transaction not found' });
@@ -203,30 +242,27 @@ exports.verifyCheckout = async (req, res) => {
             });
         }
 
-        // Use raw REST JSON — paddle.subscriptions.get() can throw when billing_cycle/items are still null (SDK entity bug)
-        console.log(`[Paddle Verify] Fetching subscription JSON for ${subscriptionId}...`);
-        let rawSub;
-        try {
-            rawSub = await fetchSubscriptionDataRaw(subscriptionId);
-        } catch (fetchErr) {
-            console.error('[Paddle Verify] fetchSubscriptionDataRaw failed:', fetchErr.message);
-            throw fetchErr;
-        }
-        console.log(`[Paddle Verify] Subscription raw status: ${rawSub?.status}`);
-
+        // Provision from the transaction only. GET /subscriptions/{id} often returns 403 "You aren't permitted…"
+        // for API keys that can still read transactions (common Paddle permission setup).
         const Subscription = require('../models/Subscription');
         const Organization = require('../models/Organization');
         const User = require('../models/User');
 
-        const customerId = rawSub.customer_id || null;
-        const subStatus = mapPaddleStatusToUserSubscriptionStatus(rawSub.status);
-        const cbp = rawSub.current_billing_period;
-        const bc = rawSub.billing_cycle;
-        const userBillingCycle = mapPaddleIntervalToUserBillingCycle(bc?.interval);
+        const customerId = transaction.customerId || null;
+        const billingPeriod = transaction.billingPeriod;
+        const priceBilling = transaction.priceBilling;
+        const userBillingCycle = mapPaddleIntervalToUserBillingCycle(priceBilling?.interval);
 
-        const periodStart = cbp?.starts_at ? new Date(cbp.starts_at) : new Date();
-        const periodEnd = cbp?.ends_at ? new Date(cbp.ends_at) : new Date();
-        const nextBilledAt = rawSub.next_billed_at ? new Date(rawSub.next_billed_at) : null;
+        const periodStart = billingPeriod?.startsAt
+            ? new Date(billingPeriod.startsAt)
+            : new Date();
+        const periodEnd = billingPeriod?.endsAt
+            ? new Date(billingPeriod.endsAt)
+            : new Date();
+        const nextBilledAt = billingPeriod?.endsAt ? new Date(billingPeriod.endsAt) : null;
+
+        const mongooseInterval = priceBilling?.interval === 'year' ? 'year' : 'month';
+        const mongooseFrequency = priceBilling?.frequency ?? 1;
 
         console.log(`[Paddle Verify] Looking up user: ${req.user._id}`);
         const user = await User.findById(req.user._id);
@@ -242,7 +278,7 @@ exports.verifyCheckout = async (req, res) => {
         // Apply upgrade since we verified payment
         console.log('[Paddle Verify] Applying upgrade locally...');
         user.plan = 'pro';
-        user.subscriptionStatus = subStatus;
+        user.subscriptionStatus = 'active';
         user.paddleCustomerId = customerId;
         user.paddleSubscriptionId = subscriptionId;
         if (userBillingCycle) user.billingCycle = userBillingCycle;
@@ -253,7 +289,9 @@ exports.verifyCheckout = async (req, res) => {
             organization.subscription.status = 'active';
             organization.subscription.paddleCustomerId = customerId;
             organization.subscription.paddleSubscriptionId = subscriptionId;
-            organization.subscription.currentPeriodEnd = cbp?.ends_at ? new Date(cbp.ends_at) : null;
+            organization.subscription.currentPeriodEnd = billingPeriod?.endsAt
+                ? new Date(billingPeriod.endsAt)
+                : null;
 
             const proFeatures = Subscription.plans.pro.features;
             organization.features = {
@@ -277,8 +315,8 @@ exports.verifyCheckout = async (req, res) => {
                 paddleCustomerId: customerId,
                 paddleSubscriptionId: subscriptionId,
                 billingCycle: {
-                    interval: bc?.interval === 'year' ? 'year' : 'month',
-                    frequency: bc?.frequency ?? 1
+                    interval: mongooseInterval,
+                    frequency: mongooseFrequency
                 },
                 nextBilledAt,
                 cancelAtPeriodEnd: false
