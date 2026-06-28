@@ -42,7 +42,7 @@ exports.getStatus = async (req, res) => {
                 status: organization.subscription.status,
                 features: organization.features,
                 usage: usage,
-                trial: null, // Trial system removed - free users get 3 invoices lifetime
+                trialEndsAt: organization.subscription.trialEndsAt || null,
                 billing: subscription ? {
                     currentPeriodEnd: subscription.currentPeriodEnd,
                     nextBilledAt: subscription.nextBilledAt,
@@ -153,7 +153,7 @@ exports.getUsage = async (req, res) => {
         const usage = await getInvoiceUsage(req.user.organization);
 
         // Get historical usage (last 6 months)
-        const Invoice = require('../models/Invoice');
+        const Invoice = require('../models/InvoiceReminder');
         const monthlyUsage = [];
 
         for (let i = 5; i >= 0; i--) {

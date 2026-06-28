@@ -39,7 +39,7 @@ function normalizeTransactionFromPaddleJson(raw) {
  */
 async function getTransactionReadyForVerify(transactionId) {
     const { fetchTransactionJsonRaw } = require('../config/paddle');
-    const maxAttempts = 35;
+    const maxAttempts = 15;
     const intervalMs = 1000;
     let last = null;
 

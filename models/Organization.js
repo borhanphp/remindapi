@@ -30,7 +30,7 @@ const organizationSchema = new mongoose.Schema({
   subscription: {
     plan: {
       type: String,
-      enum: ['free', 'pro'],
+      enum: ['free', 'pro', 'team'],
       default: 'free'
     },
     status: {

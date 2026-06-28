@@ -47,7 +47,49 @@ const invoiceReminderSchema = new mongoose.Schema({
     },
     remindersSent: [{
         type: Date
-    }]
+    }],
+    portalToken: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
+    viewedAt: {
+        type: Date,
+        default: null
+    },
+    viewCount: {
+        type: Number,
+        default: 0
+    },
+    currency: {
+        type: String,
+        default: 'USD',
+        uppercase: true,
+    },
+    lateFee: {
+        applied: { type: Boolean, default: false },
+        amount: { type: Number, default: 0 },
+        appliedAt: Date,
+    },
+    paidAmount: {
+        type: Number,
+        default: 0,
+    },
+    paidAt: Date,
+    paymentMethod: {
+        type: String,
+        enum: ['manual', 'stripe', 'paypal', 'portal', null],
+        default: null,
+    },
+    stripePaymentIntentId: String,
+    clientId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Client',
+        default: null,
+    },
 }, { timestamps: true });
+
+invoiceReminderSchema.index({ status: 1, dueDate: 1 });
+invoiceReminderSchema.index({ userId: 1, status: 1 });
 
 module.exports = mongoose.model('InvoiceReminder', invoiceReminderSchema);

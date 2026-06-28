@@ -131,7 +131,7 @@ const UserSchema = new mongoose.Schema(
     // SaaS Subscription Fields
     plan: {
       type: String,
-      enum: ['free', 'pro'],
+      enum: ['free', 'pro', 'team'],
       default: 'free'
     },
     subscriptionStatus: {

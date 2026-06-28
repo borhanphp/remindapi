@@ -1,7 +1,6 @@
-const { Task, TaskAutomation, User } = require('../models');
-const { sendEmail } = require('./notify');
-const { isModuleEnabled } = require('../config/modules');
+const { User } = require('../models');
 const { checkAndSendReminders } = require('../controllers/InvoiceReminderController');
+const { processRecurringReminders } = require('../controllers/recurringReminderController');
 const Organization = require('../models/Organization');
 const subscriptionEmailService = require('../services/subscriptionEmailService');
 const { getInvoiceUsage } = require('./subscriptionHelpers');
@@ -34,6 +33,26 @@ function startScheduledTasks() {
     }
   });
 
+  // Recurring Reminders — daily at 6:00 AM UTC
+  cron.schedule('0 6 * * *', async () => {
+    try {
+      console.log('[Scheduled Tasks] Processing recurring reminders...');
+      await processRecurringReminders();
+    } catch (error) {
+      console.error('Error in Recurring Reminder Processing:', error);
+    }
+  });
+
+  // Trial Expiry Check — daily at 9:00 AM UTC
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      console.log('[Trial Check] Checking trial expirations...');
+      await checkTrialExpirations();
+    } catch (error) {
+      console.error('Error in Trial Expiry Check:', error);
+    }
+  });
+
   // Usage Warning Check — daily at 8:00 AM UTC
   cron.schedule('0 8 * * *', async () => {
     try {
@@ -43,92 +62,17 @@ function startScheduledTasks() {
     }
   });
 
-  // Project task reminders and recurrences — every 5 minutes
-  cron.schedule('*/5 * * * *', async () => {
+  // Late Fee Application — daily at 7:00 AM UTC
+  cron.schedule('0 7 * * *', async () => {
     try {
-      // Check if Task model exists and has data
-      if (!Task || typeof Task.find !== 'function') {
-        return; // Skip project automation for single-purpose apps
-      }
-
-      const now = new Date();
-      const soon = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // 48h
-
-      // Due-soon reminders
-      const dueSoon = await Task.find({ dueDate: { $gte: now, $lte: soon }, status: { $in: ['backlog', 'todo', 'in-progress', 'blocked'] } })
-        .populate('assigneeId', 'email name');
-      for (const t of dueSoon) {
-        if (t.assigneeId?.email) {
-          await sendEmail({ to: t.assigneeId.email, subject: `Task due soon: ${t.title}`, html: `Task "${t.title}" is due by ${t.dueDate?.toISOString().slice(0, 10)}` });
-        }
-      }
-
-      // Overdue pings
-      const overdue = await Task.find({ dueDate: { $lt: now }, status: { $in: ['backlog', 'todo', 'in-progress', 'blocked'] } }).populate('assigneeId', 'email name');
-      for (const t of overdue) {
-        if (t.assigneeId?.email) {
-          await sendEmail({ to: t.assigneeId.email, subject: `Task overdue: ${t.title}`, html: `Task "${t.title}" was due by ${t.dueDate?.toISOString().slice(0, 10)}` });
-        }
-      }
-
-      // Rule-based auto-assignment (very simple evaluator)
-      if (TaskAutomation && typeof TaskAutomation.find === 'function') {
-        const activeRules = await TaskAutomation.find({ isActive: true, 'trigger.type': 'rule' });
-        if (activeRules && activeRules.length) {
-          for (const rule of activeRules) {
-            const match = rule.trigger?.config?.match || 'all';
-            const conditions = Array.isArray(rule.trigger?.config?.if) ? rule.trigger.config.if : [];
-            const candidates = await Task.find({ organization: rule.organization, project: rule.project });
-            for (const t of candidates) {
-              const ok = conditions.length === 0 || (match === 'all'
-                ? conditions.every(c => evalCond(t, c))
-                : conditions.some(c => evalCond(t, c))
-              );
-              if (!ok) continue;
-              if (rule.action?.type === 'assign' && rule.action?.config?.assigneeId && String(t.assigneeId || '') !== String(rule.action.config.assigneeId)) {
-                await Task.updateOne({ _id: t._id }, { $set: { assigneeId: rule.action.config.assigneeId } });
-              }
-            }
-          }
-        }
-      }
-
-      // Basic recurrence: when a recurring task is completed and has count left, create next occurrence
-      const completedRecurring = await Task.find({ 'recurrence.type': { $exists: true }, completedAt: { $exists: true } });
-      for (const t of completedRecurring) {
-        // skip if until passed or count is 0
-        const until = t.recurrence?.until ? new Date(t.recurrence.until) : null;
-        if (until && now > until) continue;
-        if (t.recurrence?.count !== undefined && t.recurrence.count <= 1) continue;
-
-        const next = new Task({
-          organization: t.organization,
-          project: t.project,
-          title: t.title,
-          description: t.description,
-          assigneeId: t.assigneeId,
-          status: 'backlog',
-          priority: t.priority,
-          startDate: t.dueDate || now,
-          dueDate: computeNextDueDate(t.dueDate || now, t.recurrence),
-          estimatedHours: t.estimatedHours,
-          labels: t.labels,
-          recurrence: t.recurrence?.count ? { ...t.recurrence, count: t.recurrence.count - 1 } : t.recurrence
-        });
-        await next.save();
-        // Clear recurrence on the completed task to avoid repeated spawns
-        t.recurrence = undefined;
-        await t.save();
-      }
-    } catch (err) {
-      // Only log if it's not a model-not-found error
-      if (!err?.message?.includes('find')) {
-        console.error('Project automations failed:', err?.message);
-      }
+      console.log('[Late Fees] Checking for late fee application...');
+      await applyLateFees();
+    } catch (error) {
+      console.error('Error in Late Fee Application:', error);
     }
   });
 
-  // Run invoice reminder check once on startup (after 10 seconds to let DB connect)
+  // Run startup tasks after DB connects
   setTimeout(async () => {
     try {
       console.log('[Scheduled Tasks] Running initial invoice reminder check...');
@@ -136,41 +80,33 @@ function startScheduledTasks() {
     } catch (error) {
       console.error('Error in initial Invoice Reminder Check:', error);
     }
+
+    try {
+      await backfillPortalTokens();
+    } catch (error) {
+      console.error('Error in portal token backfill:', error);
+    }
   }, 10000);
 }
 
-function computeNextDueDate(from, recurrence) {
-  const d = new Date(from);
-  const interval = Math.max(1, recurrence?.interval || 1);
-  switch (recurrence?.frequency) {
-    case 'daily': d.setDate(d.getDate() + interval); break;
-    case 'weekly': d.setDate(d.getDate() + 7 * interval); break;
-    case 'monthly': d.setMonth(d.getMonth() + interval); break;
-    case 'yearly': d.setFullYear(d.getFullYear() + interval); break;
-    default: d.setDate(d.getDate() + interval);
+async function backfillPortalTokens() {
+  const InvoiceReminder = require('../models/InvoiceReminder');
+  const { generatePortalToken } = require('./portalToken');
+
+  const invoices = await InvoiceReminder.find({
+    $or: [{ portalToken: { $exists: false } }, { portalToken: null }, { portalToken: '' }]
+  }).select('_id');
+
+  if (invoices.length === 0) return;
+
+  console.log(`[Backfill] Generating portal tokens for ${invoices.length} invoices...`);
+  let count = 0;
+  for (const inv of invoices) {
+    const token = generatePortalToken(inv._id);
+    await InvoiceReminder.updateOne({ _id: inv._id }, { $set: { portalToken: token } });
+    count++;
   }
-  return d;
-}
-
-function evalCond(task, cond) {
-  try {
-    const { field, operator, value } = cond || {};
-    const left = get(task, field);
-    switch (operator) {
-      case 'eq': return String(left) === String(value);
-      case 'neq': return String(left) !== String(value);
-      case 'in': return Array.isArray(value) && value.map(String).includes(String(left));
-      case 'contains': return Array.isArray(left) ? left.map(String).includes(String(value)) : (left || '').toString().includes(String(value));
-      case 'gt': return Number(left) > Number(value);
-      case 'lt': return Number(left) < Number(value);
-      default: return false;
-    }
-  } catch { return false; }
-}
-
-function get(obj, path) {
-  if (!path) return undefined;
-  return path.split('.').reduce((acc, k) => (acc ? acc[k] : undefined), obj);
+  console.log(`[Backfill] Portal tokens generated for ${count} invoices.`);
 }
 
 /**
@@ -292,8 +228,119 @@ async function checkUsageLimits() {
   }
 }
 
+/**
+ * Check trial expirations: warn at 3 and 1 day before, downgrade when expired
+ */
+async function checkTrialExpirations() {
+  console.log('[Trial Check] Checking trial expirations...');
+
+  try {
+    const Subscription = require('../models/Subscription');
+    const now = new Date();
+
+    const trialOrgs = await Organization.find({
+      'subscription.status': 'trial',
+      'subscription.trialEndsAt': { $exists: true, $ne: null }
+    });
+
+    for (const org of trialOrgs) {
+      const trialEnd = new Date(org.subscription.trialEndsAt);
+      const daysLeft = Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24));
+      const owner = await User.findOne({ organization: org._id, isOwner: true });
+
+      if (!owner) continue;
+
+      if (daysLeft <= 0) {
+        // Trial expired — downgrade to free
+        console.log(`[Trial Check] Trial expired for org ${org.name}. Downgrading...`);
+
+        const freeFeatures = Subscription.plans.free.features;
+        org.subscription.plan = 'free';
+        org.subscription.status = 'active';
+        org.features = {
+          maxInvoices: freeFeatures.maxInvoices,
+          emailReminders: freeFeatures.emailReminders,
+          basicReporting: freeFeatures.basicReporting,
+          automatedSchedule: freeFeatures.automatedSchedule,
+          prioritySupport: freeFeatures.prioritySupport,
+          removeBranding: freeFeatures.removeBranding
+        };
+        await org.save();
+
+        await User.updateMany(
+          { organization: org._id },
+          { $set: { plan: 'free', subscriptionStatus: 'active' } }
+        );
+
+        await subscriptionEmailService.sendTrialExpiredEmail(owner, org);
+        console.log(`[Trial Check] Org ${org.name} downgraded to FREE`);
+      } else if (daysLeft === 3 || daysLeft === 1) {
+        // Send warning email
+        console.log(`[Trial Check] Trial ending in ${daysLeft} day(s) for org ${org.name}`);
+        await subscriptionEmailService.sendTrialExpiringEmail(owner, org, daysLeft);
+      }
+    }
+
+    console.log(`[Trial Check] Checked ${trialOrgs.length} trial organizations`);
+  } catch (error) {
+    console.error('[Trial Check] Error:', error);
+  }
+}
+
+/**
+ * Apply late fees to overdue invoices based on organization settings
+ */
+async function applyLateFees() {
+  const InvoiceReminder = require('../models/InvoiceReminder');
+  const InvoiceSettings = require('../models/InvoiceSettings');
+
+  try {
+    const overdueInvoices = await InvoiceReminder.find({
+      status: 'overdue',
+      'lateFee.applied': { $ne: true },
+    }).populate({ path: 'userId', select: 'organization' });
+
+    const settingsCache = {};
+    let applied = 0;
+
+    for (const invoice of overdueInvoices) {
+      const orgId = invoice.userId?.organization?.toString();
+      if (!orgId) continue;
+
+      if (!settingsCache[orgId]) {
+        settingsCache[orgId] = await InvoiceSettings.findOne({ organization: orgId });
+      }
+      const settings = settingsCache[orgId];
+      if (!settings?.lateFee?.enabled || !settings.lateFee.value) continue;
+
+      const now = new Date();
+      const dueDate = new Date(invoice.dueDate);
+      const daysOverdue = Math.floor((now - dueDate) / (1000 * 60 * 60 * 24));
+
+      if (daysOverdue <= (settings.lateFee.gracePeriodDays || 0)) continue;
+
+      let feeAmount = 0;
+      if (settings.lateFee.type === 'percentage') {
+        feeAmount = Math.round(invoice.amount * (settings.lateFee.value / 100) * 100) / 100;
+      } else {
+        feeAmount = settings.lateFee.value;
+      }
+
+      invoice.lateFee = { applied: true, amount: feeAmount, appliedAt: now };
+      await invoice.save();
+      applied++;
+    }
+
+    console.log(`[Late Fees] Applied late fees to ${applied} invoices`);
+  } catch (error) {
+    console.error('[Late Fees] Error:', error);
+  }
+}
+
 module.exports = {
   startScheduledTasks,
   checkUsageLimits,
-  checkExpiredSubscriptions
+  checkExpiredSubscriptions,
+  checkTrialExpirations,
+  applyLateFees
 };

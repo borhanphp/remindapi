@@ -70,15 +70,15 @@ exports.getRemainingInvoices = async (organizationId) => {
         const maxInvoices = organization.features.maxInvoices || 3;
 
         // Count ALL invoices (lifetime limit, matching checkInvoiceLimit middleware)
-        const Invoice = require('../models/Invoice');
         const InvoiceReminder = require('../models/InvoiceReminder');
-        const User = require('./subscriptionHelpers').User || require('../models/User');
+        const User = require('../models/User');
 
         const orgUsers = await require('../models/User').find({ organization: organizationId }).select('_id');
         const userIds = orgUsers.map(u => u._id);
 
         const invoiceCount = await InvoiceReminder.countDocuments({
-            userId: { $in: userIds }
+            userId: { $in: userIds },
+            status: { $ne: 'paid' }
         });
 
         return Math.max(0, maxInvoices - invoiceCount);
@@ -126,11 +126,12 @@ exports.getInvoiceUsage = async (organizationId) => {
             };
         }
 
-        // Free plan: count ALL invoices (lifetime limit)
+        // Free plan: count active (unpaid) invoices only
         const maxInvoices = organization.features.maxInvoices || 3;
 
         const invoiceCount = await InvoiceReminder.countDocuments({
-            userId: { $in: userIds }
+            userId: { $in: userIds },
+            status: { $ne: 'paid' }
         });
 
         return {

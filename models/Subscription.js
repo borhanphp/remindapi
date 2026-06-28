@@ -8,7 +8,7 @@ const subscriptionSchema = new mongoose.Schema({
   },
   plan: {
     type: String,
-    enum: ['free', 'pro'],
+    enum: ['free', 'pro', 'team'],
     required: true
   },
   status: {
@@ -117,8 +117,6 @@ subscriptionSchema.statics.plans = {
     features: {
       maxInvoices: 3,
       emailReminders: true,
-      smsReminders: false,
-      whatsappReminders: false,
       basicReporting: true,
       automatedSchedule: true,
       prioritySupport: false,
@@ -131,14 +129,28 @@ subscriptionSchema.statics.plans = {
     annualPrice: 179,
     interval: 'month',
     features: {
-      maxInvoices: -1, // unlimited
+      maxInvoices: -1,
       emailReminders: true,
-      smsReminders: true,
-      whatsappReminders: true,
       basicReporting: true,
       automatedSchedule: true,
       prioritySupport: true,
       removeBranding: true
+    }
+  },
+  team: {
+    name: 'Team',
+    price: 49,
+    annualPrice: 468,
+    interval: 'month',
+    features: {
+      maxInvoices: -1,
+      maxUsers: 5,
+      emailReminders: true,
+      basicReporting: true,
+      automatedSchedule: true,
+      prioritySupport: true,
+      removeBranding: true,
+      teamManagement: true
     }
   }
 };

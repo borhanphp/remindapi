@@ -19,14 +19,20 @@ const sendViaResend = async (options) => {
   const fromName = process.env.FROM_NAME || 'Zeeventory';
 
   try {
-    const { data, error } = await resend.emails.send({
+    const emailPayload = {
       from: `${fromName} <${fromEmail}>`,
       to: Array.isArray(options.to) ? options.to : [options.to],
       subject: options.subject,
       html: options.html,
       text: options.text,
       reply_to: options.replyTo || fromEmail,
-    });
+    };
+
+    if (options.attachments && options.attachments.length > 0) {
+      emailPayload.attachments = options.attachments;
+    }
+
+    const { data, error } = await resend.emails.send(emailPayload);
 
     if (error) {
       console.error('❌ Resend error:', error);
@@ -115,6 +121,10 @@ const sendViaNodemailer = async (options) => {
     html: options.html,
     replyTo: options.replyTo || options.from || process.env.FROM_EMAIL
   };
+
+  if (options.attachments && options.attachments.length > 0) {
+    message.attachments = options.attachments;
+  }
 
   const info = await transporter.sendMail(message);
 

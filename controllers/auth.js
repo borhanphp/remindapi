@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const User = require('../models/User');
 const Role = require('../models/Role');
 const sendEmail = require('../utils/sendEmail');
+const subscriptionEmailService = require('../services/subscriptionEmailService');
 
 /**
  * Generate JWT Token
@@ -63,15 +64,19 @@ exports.register = async (req, res) => {
       counter++;
     }
 
+    const Subscription = require('../models/Subscription');
+    const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
     const organization = await Organization.create({
       name: orgName,
       slug,
-      approvalStatus: 'approved', // Auto-approve for SaaS
+      approvalStatus: 'approved',
       subscription: {
-        plan: 'free',
-        status: 'active',
-        // trialEndsAt: removed (no trial)
-      }
+        plan: 'pro',
+        status: 'trial',
+        trialEndsAt,
+      },
+      features: Subscription.plans.pro.features,
     });
 
     console.log('✅ Auth Register: Organization Created:', organization._id);
@@ -85,17 +90,19 @@ exports.register = async (req, res) => {
       isCustom: false
     });
 
-    // 4. Create User linked to Org
+    // 4. Create User linked to Org (with 14-day Pro trial)
     user = await User.create({
       name,
       companyName,
       email,
       password,
-      organization: organization._id, // DIRECT LINK
+      organization: organization._id,
       role: ownerRole._id,
       organizationRole: 'user',
       isOwner: true,
-      legacyRole: 'admin'
+      legacyRole: 'admin',
+      plan: 'pro',
+      subscriptionStatus: 'trialing',
     });
 
     console.log('✅ Auth Register: User Created:', user._id);
@@ -138,6 +145,13 @@ exports.register = async (req, res) => {
       });
     } catch (emailError) {
       console.error('Failed to send verification email:', emailError);
+    }
+
+    // Send trial start email (non-blocking)
+    try {
+      await subscriptionEmailService.sendTrialStartEmail(user, organization);
+    } catch (trialEmailError) {
+      console.error('Failed to send trial start email:', trialEmailError);
     }
 
     res.status(201).json({
@@ -1011,8 +1025,8 @@ exports.updatePassword = async (req, res) => {
         _id: user._id,
         name: user.name,
         email: user.email,
-        role: req.user.role,
-        organization: req.user.organization
+        role: req.user.role || null,
+        organization: req.user.organization || null
       }
     });
   } catch (error) {

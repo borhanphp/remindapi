@@ -41,8 +41,6 @@ async function createProUser() {
             features: {
                 maxInvoices: -1, // unlimited for pro
                 emailReminders: true,
-                smsReminders: true,
-                whatsappReminders: true,
                 basicReporting: true,
                 automatedSchedule: true,
                 prioritySupport: true,

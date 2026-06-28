@@ -16,7 +16,6 @@ const {
   updateDetails
 } = require('../controllers/auth');
 const { protect, requirePlatformAdmin } = require('../middleware/auth');
-const { PERMISSIONS } = require('../utils/permissions');
 const {
   loginRateLimit,
   registrationRateLimit,

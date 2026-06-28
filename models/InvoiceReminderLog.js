@@ -22,4 +22,6 @@ const invoiceReminderLogSchema = new mongoose.Schema({
     }
 }, { timestamps: true });
 
+invoiceReminderLogSchema.index({ invoiceId: 1, type: 1 });
+
 module.exports = mongoose.model('InvoiceReminderLog', invoiceReminderLogSchema);

@@ -9,7 +9,10 @@ const {
     deleteInvoice,
     sendManualReminder,
     getInvoiceLogs,
-    getInvoice
+    getInvoice,
+    downloadInvoicePdf,
+    getReminderSchedule,
+    updateReminderSchedule
 } = require('../controllers/InvoiceReminderController');
 const { protect } = require('../middleware/auth');
 const {
@@ -35,11 +38,18 @@ router.route('/invoices/:id')
 router.route('/invoices/:id/logs')
     .get(protect, getInvoiceLogs);
 
+router.route('/invoices/:id/pdf')
+    .get(protect, downloadInvoicePdf);
+
 router.route('/invoices/:id/pay')
     .put(protect, markAsPaid);
 
 router.route('/invoices/:id/remind')
     .post(protect, reminderRateLimit, sendManualReminder);
+
+router.route('/settings/schedule')
+    .get(protect, getReminderSchedule)
+    .put(protect, updateReminderSchedule);
 
 router.route('/stats')
     .get(protect, getDashboardStats);

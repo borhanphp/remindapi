@@ -1,8 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Role = require('../models/Role');
-const { ROLE_PERMISSIONS } = require('../utils/rolePermissions');
-const { PERMISSIONS } = require('../utils/permissions');
 const ApiError = require('../utils/ApiError');
 
 // Protect routes
