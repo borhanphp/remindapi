@@ -16,6 +16,11 @@ const paymentConfigSchema = new mongoose.Schema({
         default: 'paddle'
     },
 
+    // Pricing configuration
+    proPrice: { type: Number, default: 19 },
+    proAnnualPrice: { type: Number, default: 179 },
+    freeMaxInvoices: { type: Number, default: 3 },
+
     // Paddle configuration (loaded from env by default)
     paddle: {
         clientToken: { type: String, default: '' },

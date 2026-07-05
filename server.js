@@ -176,6 +176,7 @@ app.use('/api/accounting', require('./routes/accountingRoutes'));
 app.use('/api/clients', require('./routes/clientRoutes'));
 app.use('/api/branding', require('./routes/brandingRoutes'));
 app.use('/api/payments', require('./routes/paymentCollectionRoutes'));
+app.use('/api/admin', require('./routes/adminRoutes'));
 
 // Serve uploaded branding files
 const path = require('path');

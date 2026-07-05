@@ -12,6 +12,10 @@ const organizationSchema = new mongoose.Schema({
     unique: true,
     lowercase: true
   },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
   approvalStatus: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],
