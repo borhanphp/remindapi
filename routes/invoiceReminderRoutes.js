@@ -12,7 +12,8 @@ const {
     getInvoice,
     downloadInvoicePdf,
     getReminderSchedule,
-    updateReminderSchedule
+    updateReminderSchedule,
+    rotatePortalToken
 } = require('../controllers/InvoiceReminderController');
 const { protect } = require('../middleware/auth');
 const {
@@ -46,6 +47,9 @@ router.route('/invoices/:id/pay')
 
 router.route('/invoices/:id/remind')
     .post(protect, reminderRateLimit, sendManualReminder);
+
+router.route('/invoices/:id/rotate-portal-token')
+    .post(protect, rotatePortalToken);
 
 router.route('/settings/schedule')
     .get(protect, getReminderSchedule)

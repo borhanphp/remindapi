@@ -142,10 +142,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Connect to MongoDB
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    const conn = await mongoose.connect(process.env.MONGO_URI);
 
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     return true;
@@ -181,6 +178,18 @@ app.use('/api/admin', require('./routes/adminRoutes'));
 // Serve uploaded branding files
 const path = require('path');
 app.use('/uploads/branding', require('express').static(path.join(__dirname, 'uploads', 'branding')));
+
+// Health check for uptime monitors and load balancers: 200 only when the
+// database is actually reachable
+app.get('/health', (req, res) => {
+  const dbConnected = mongoose.connection.readyState === 1;
+  res.status(dbConnected ? 200 : 503).json({
+    status: dbConnected ? 'ok' : 'degraded',
+    database: dbConnected ? 'connected' : 'disconnected',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Root route with DB status
 app.get('/', async (req, res) => {

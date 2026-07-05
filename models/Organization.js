@@ -55,6 +55,12 @@ const organizationSchema = new mongoose.Schema({
       type: String,
       enum: ['paddle', 'polar'],
       default: 'paddle'
+    },
+    // Set when the 80% usage warning email is sent; cleared when usage drops
+    // back below the threshold, so owners get one warning per approach.
+    usageWarningSentAt: {
+      type: Date,
+      default: null
     }
   },
   // Company Information

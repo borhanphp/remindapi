@@ -4,8 +4,38 @@ const InvoiceSettings = require('../models/InvoiceSettings');
 const Client = require('../models/Client');
 const { generatePortalToken } = require('../utils/portalToken');
 const { dispatch: dispatchWebhook } = require('../services/webhookService');
+const { escapeHtml, formatCurrency, daysSinceDue, formatDateInTz } = require('../utils/format');
+const { createInvoiceSchema, updateInvoiceSchema, validate } = require('../utils/invoiceValidation');
 
 const ALLOWED_CHANNELS = ['email', 'whatsapp'];
+
+/**
+ * Has this recipient unsubscribed from reminder emails?
+ */
+async function isEmailOptedOut(organizationId, email) {
+    if (!organizationId || !email) return false;
+    const client = await Client.findOne({
+        organization: organizationId,
+        email: email.toLowerCase(),
+        emailOptOut: true
+    }).select('_id');
+    return !!client;
+}
+
+function unsubscribeUrl(invoice) {
+    return invoice.portalToken
+        ? `${process.env.FRONTEND_URL}/unsubscribe/${invoice.portalToken}`
+        : null;
+}
+
+function emailFooter(invoice) {
+    const url = unsubscribeUrl(invoice);
+    if (!url) return { text: '', html: '' };
+    return {
+        text: `\n\n---\nNo longer want payment reminders for these invoices? Unsubscribe: ${url}`,
+        html: `<p style="margin-top:24px;font-size:12px;color:#888;">No longer want payment reminders for these invoices? <a href="${url}" style="color:#888;">Unsubscribe</a></p>`
+    };
+}
 
 function normalizeReminderChannels(channels, userPlan = 'free') {
     if (!Array.isArray(channels) || channels.length === 0) {
@@ -25,7 +55,11 @@ function normalizeReminderChannels(channels, userPlan = 'free') {
  */
 exports.createInvoice = async (req, res) => {
     try {
-        const { clientName, clientEmail, clientPhone, amount, dueDate, paymentLink, invoiceNumber, reminderChannels } = req.body;
+        const { data: body, error: validationError } = validate(createInvoiceSchema, req.body);
+        if (validationError) {
+            return res.status(400).json({ success: false, error: validationError });
+        }
+        const { clientName, clientEmail, clientPhone, amount, dueDate, paymentLink, invoiceNumber, reminderChannels, currency } = body;
 
         // Feature Gating: Check Plan Limits
         const user = req.user; // Assumes auth middleware populates this
@@ -65,12 +99,10 @@ exports.createInvoice = async (req, res) => {
             dueDate,
             paymentLink,
             invoiceNumber,
-            reminderChannels: allowedChannels
+            currency: currency || 'USD',
+            reminderChannels: allowedChannels,
+            portalToken: generatePortalToken()
         });
-
-        // Generate portal token after creation (needs _id)
-        invoice.portalToken = generatePortalToken(invoice._id);
-        await invoice.save();
 
         dispatchWebhook(req.user.organization, 'invoice.created', invoice.toObject()).catch(() => {});
 
@@ -95,8 +127,9 @@ exports.createInvoice = async (req, res) => {
             );
             invoice.clientId = existingClient._id;
             await invoice.save();
-        } catch {
-            // Non-critical — don't fail the invoice creation
+        } catch (clientErr) {
+            // Non-critical — don't fail the invoice creation, but never hide it
+            console.error('[Invoice] Client auto-save failed:', clientErr.message);
         }
 
         res.status(201).json({
@@ -319,6 +352,11 @@ exports.markAsPaid = async (req, res) => {
         }
 
         invoice.status = 'paid';
+        invoice.paidAt = invoice.paidAt || new Date();
+        if (!invoice.paidAmount) {
+            invoice.paidAmount = invoice.amount + (invoice.lateFee?.applied ? invoice.lateFee.amount : 0);
+        }
+        invoice.paymentMethod = invoice.paymentMethod || 'manual';
         await invoice.save();
 
         dispatchWebhook(req.user.organization, 'invoice.paid', invoice.toObject()).catch(() => {});
@@ -360,12 +398,21 @@ exports.updateInvoice = async (req, res) => {
             });
         }
 
-        let body = { ...req.body };
-        if (body.reminderChannels) {
-            body.reminderChannels = normalizeReminderChannels(body.reminderChannels);
+        const { data: body, error: validationError } = validate(updateInvoiceSchema, req.body);
+        if (validationError) {
+            return res.status(400).json({ success: false, error: validationError });
+        }
+        // Only apply fields that were actually sent (partial schema fills
+        // absent optionals with null via the empty-string transform)
+        const update = {};
+        for (const key of Object.keys(body)) {
+            if (req.body[key] !== undefined) update[key] = body[key];
+        }
+        if (update.reminderChannels) {
+            update.reminderChannels = normalizeReminderChannels(update.reminderChannels, req.user.plan);
         }
 
-        invoice = await InvoiceReminder.findByIdAndUpdate(req.params.id, body, {
+        invoice = await InvoiceReminder.findByIdAndUpdate(req.params.id, update, {
             new: true,
             runValidators: true
         });
@@ -477,35 +524,50 @@ exports.sendManualReminder = async (req, res) => {
         const channels = normalizeReminderChannels(invoice.reminderChannels, req.user.plan);
         const results = [];
 
+        const amountDisplay = formatCurrency(invoice.amount, invoice.currency);
+        const dueDisplay = formatDateInTz(invoice.dueDate, req.user.timezone);
+        const safeName = escapeHtml(invoice.clientName);
+        const safeSender = escapeHtml(senderName);
+        const safeRef = escapeHtml(invoiceRef);
+
+        const optedOut = await isEmailOptedOut(req.user.organization, invoice.clientEmail);
+        if (optedOut && channels.includes('email') && channels.length === 1) {
+            return res.status(400).json({
+                success: false,
+                error: 'This client has unsubscribed from reminder emails.'
+            });
+        }
+
         console.log('📤 Sending manual reminder:');
         console.log('  Invoice ID:', invoice._id);
         console.log('  Channels:', channels);
         console.log('  Client Email:', invoice.clientEmail);
 
         // --- Send via Email ---
-        if (channels.includes('email')) {
+        if (channels.includes('email') && !optedOut) {
             const sendEmail = require('../utils/sendEmail');
+            const footer = emailFooter(invoice);
 
             const subject = `Reminder: Invoice${invoiceDisplay} from ${senderName}`;
             let message = `Hi ${invoice.clientName},\n\n`;
             message += `Just a friendly reminder about invoice${invoiceDisplay}\n`;
-            message += `from ${senderName} for $${invoice.amount.toLocaleString()}, due ${new Date(invoice.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`;
+            message += `from ${senderName} for ${amountDisplay}, due ${dueDisplay}.`;
             if (actionLink) {
                 message += `\n\nView or pay this invoice:\n👉 ${actionLink}`;
             } else {
                 message += `\n\nPlease contact ${senderName} for payment details.`;
             }
-            message += `\n\nThanks,\n${senderName}`;
+            message += `\n\nThanks,\n${senderName}${footer.text}`;
 
-            let htmlMessage = `<p>Hi ${invoice.clientName},</p>
-<p>Just a friendly reminder about invoice${invoiceRef ? ` <strong>${invoiceRef}</strong>` : ''}<br>
-from ${senderName} for <strong>$${invoice.amount.toLocaleString()}</strong>, due ${new Date(invoice.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.</p>`;
+            let htmlMessage = `<p>Hi ${safeName},</p>
+<p>Just a friendly reminder about invoice${safeRef ? ` <strong>${safeRef}</strong>` : ''}<br>
+from ${safeSender} for <strong>${escapeHtml(amountDisplay)}</strong>, due ${dueDisplay}.</p>`;
             if (actionLink) {
                 htmlMessage += `<p style="margin: 20px 0;"><a href="${actionLink}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">View & Pay Invoice</a></p>`;
             } else {
-                htmlMessage += `<p>Please contact ${senderName} for payment details.</p>`;
+                htmlMessage += `<p>Please contact ${safeSender} for payment details.</p>`;
             }
-            htmlMessage += `<p>Thanks,<br>\n${senderName}</p>`;
+            htmlMessage += `<p>Thanks,<br>\n${safeSender}</p>${footer.html}`;
 
             const emailOptions = { to: invoice.clientEmail, subject, text: message, html: htmlMessage };
 
@@ -534,7 +596,8 @@ from ${senderName} for <strong>$${invoice.amount.toLocaleString()}</strong>, due
                         clientName: invoice.clientName,
                         invoiceNumber: invoice.invoiceNumber,
                         amount: invoice.amount,
-                        dueDate: new Date(invoice.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                        currency: invoice.currency,
+                        dueDate: dueDisplay,
                         paymentLink: actionLink,
                         reminderType: 'manual'
                     });
@@ -585,27 +648,31 @@ from ${senderName} for <strong>$${invoice.amount.toLocaleString()}</strong>, due
 exports.checkAndSendReminders = async () => {
     console.log('[InvoiceReminder] Checking for reminders...');
     try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
         // Find all active invoices (not paid)
         const invoices = await InvoiceReminder.find({
             status: { $ne: 'paid' }
         }).populate('userId');
 
-        // Cache custom schedules per org to avoid repeated DB lookups
+        // Caches to avoid repeated DB lookups within one sweep
         const settingsCache = {};
+        const optOutCache = {};
 
         for (const invoice of invoices) {
             if (!invoice.userId) continue;
 
-            const dueDate = new Date(invoice.dueDate);
-            dueDate.setHours(0, 0, 0, 0);
+            // Day difference as experienced in the invoice owner's timezone
+            const ownerTz = invoice.userId.timezone;
+            const diffDays = daysSinceDue(invoice.dueDate, ownerTz);
 
-            const diffTime = today.getTime() - dueDate.getTime();
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            // Flip to overdue as soon as the due date passes, independent of
+            // whether any reminder window matches today
+            if (diffDays > 0 && invoice.status !== 'overdue') {
+                invoice.status = 'overdue';
+                await invoice.save();
+            }
 
             let reminderType = null;
+            let logType = null;
 
             // Load custom schedule for Pro users
             const orgId = invoice.userId.organization?.toString();
@@ -625,27 +692,38 @@ exports.checkAndSendReminders = async () => {
                 const beforeDays = customSchedule.beforeDueDays || [];
                 const afterDays = customSchedule.afterDueDays || [];
 
-                if (diffDays < 0 && beforeDays.some(d => Math.abs(diffDays) <= d && Math.abs(diffDays) >= d - 2)) {
-                    reminderType = 'before_due';
+                if (diffDays < 0) {
+                    const matched = beforeDays.find(d => Math.abs(diffDays) <= d && Math.abs(diffDays) >= d - 2);
+                    if (matched !== undefined) {
+                        reminderType = 'before_due';
+                        logType = `before_due_${matched}`;
+                    }
                 } else if (diffDays === 0) {
                     reminderType = 'on_due';
-                } else if (diffDays > 0 && afterDays.some(d => diffDays >= d - 1 && diffDays <= d + 1)) {
-                    reminderType = 'after_due';
+                    logType = 'on_due';
+                } else {
+                    const matched = afterDays.find(d => diffDays >= d - 1 && diffDays <= d + 1);
+                    if (matched !== undefined) {
+                        reminderType = 'after_due';
+                        logType = `after_due_${matched}`;
+                    }
                 }
             } else {
-                // Default hardcoded schedule for free users
-                if (diffDays >= -3 && diffDays < 0) reminderType = 'before_due';
-                else if (diffDays === 0) reminderType = 'on_due';
-                else if (diffDays >= 1 && diffDays <= 5) reminderType = 'after_due_3';
-                else if (diffDays >= 6 && diffDays <= 10) reminderType = 'after_due_7';
+                // Default schedule: one nudge before due, one on the due day,
+                // and two overdue reminders that dedupe independently
+                if (diffDays >= -3 && diffDays < 0) { reminderType = 'before_due'; logType = 'before_due'; }
+                else if (diffDays === 0) { reminderType = 'on_due'; logType = 'on_due'; }
+                else if (diffDays >= 1 && diffDays <= 5) { reminderType = 'after_due'; logType = 'after_due_3'; }
+                else if (diffDays >= 6 && diffDays <= 10) { reminderType = 'after_due'; logType = 'after_due_7'; }
             }
 
             if (reminderType) {
-                // Check if this reminder type was already sent for this invoice
-                const logType = reminderType.startsWith('after_due') ? 'after_due' : reminderType;
+                // Legacy logs used a collapsed 'after_due' type; treat it as
+                // covering the first overdue window during the transition
+                const dedupeTypes = logType === 'after_due_3' ? [logType, 'after_due'] : [logType];
                 const alreadySent = await InvoiceReminderLog.findOne({
                     invoiceId: invoice._id,
-                    type: logType
+                    type: { $in: dedupeTypes }
                 });
 
                 if (!alreadySent) {
@@ -653,7 +731,6 @@ exports.checkAndSendReminders = async () => {
                     const senderName = invoice.userId.companyName || invoice.userId.name;
                     const invoiceRef = invoice.invoiceNumber ? `#${invoice.invoiceNumber}` : '';
                     const invoiceDisplay = invoiceRef ? ` ${invoiceRef}` : '';
-                    const invoiceRefHtml = invoiceRef ? ` <strong>${invoiceRef}</strong>` : '';
                     const paymentLink = invoice.paymentLink;
                     const portalUrl = invoice.portalToken
                         ? `${process.env.FRONTEND_URL}/pay/${invoice.portalToken}`
@@ -662,27 +739,36 @@ exports.checkAndSendReminders = async () => {
                     const userPlan = invoice.userId.plan || 'free';
                     const channels = normalizeReminderChannels(invoice.reminderChannels, userPlan);
 
+                    const amountDisplay = formatCurrency(invoice.amount, invoice.currency);
+                    const dueDisplay = formatDateInTz(invoice.dueDate, ownerTz);
+                    const safeName = escapeHtml(invoice.clientName);
+                    const safeSender = escapeHtml(senderName);
+                    const safeAmount = escapeHtml(amountDisplay);
+                    const invoiceRefHtml = invoiceRef ? ` <strong>${escapeHtml(invoiceRef)}</strong>` : '';
+
+                    // Respect recipient unsubscribes (cached per org+email)
+                    const optKey = `${orgId || 'none'}|${invoice.clientEmail.toLowerCase()}`;
+                    if (!(optKey in optOutCache)) {
+                        optOutCache[optKey] = await isEmailOptedOut(orgId, invoice.clientEmail);
+                    }
+                    const optedOut = optOutCache[optKey];
+
                     let subject = `Reminder: Invoice${invoiceDisplay} from ${senderName}`;
                     let plainMessage = `Hi ${invoice.clientName},\n\n`;
                     let htmlBody = ``;
 
                     if (reminderType === 'before_due') {
                         subject = `Upcoming Invoice${invoiceDisplay} from ${senderName}`;
-                        plainMessage += `Just a friendly reminder that invoice${invoiceDisplay} from ${senderName} for $${invoice.amount.toLocaleString()} is due on ${invoice.dueDate.toDateString()}.`;
-                        htmlBody = `Just a friendly reminder that invoice${invoiceRefHtml} from ${senderName}<br>for <strong>$${invoice.amount.toLocaleString()}</strong> is due on ${invoice.dueDate.toDateString()}.`;
+                        plainMessage += `Just a friendly reminder that invoice${invoiceDisplay} from ${senderName} for ${amountDisplay} is due on ${dueDisplay}.`;
+                        htmlBody = `Just a friendly reminder that invoice${invoiceRefHtml} from ${safeSender}<br>for <strong>${safeAmount}</strong> is due on ${dueDisplay}.`;
                     } else if (reminderType === 'on_due') {
                         subject = `Invoice${invoiceDisplay} Due Today`;
-                        plainMessage += `Your invoice${invoiceDisplay} from ${senderName} for $${invoice.amount.toLocaleString()} is due today.`;
-                        htmlBody = `Your invoice${invoiceRefHtml} from ${senderName}<br>for <strong>$${invoice.amount.toLocaleString()}</strong> is due today.`;
+                        plainMessage += `Your invoice${invoiceDisplay} from ${senderName} for ${amountDisplay} is due today.`;
+                        htmlBody = `Your invoice${invoiceRefHtml} from ${safeSender}<br>for <strong>${safeAmount}</strong> is due today.`;
                     } else {
                         subject = `Overdue: Invoice${invoiceDisplay} from ${senderName}`;
-                        plainMessage += `Your invoice${invoiceDisplay} from ${senderName} for $${invoice.amount.toLocaleString()} was due on ${invoice.dueDate.toDateString()}. Please pay as soon as possible.`;
-                        htmlBody = `Your invoice${invoiceRefHtml} from ${senderName}<br>for <strong>$${invoice.amount.toLocaleString()}</strong> was due on ${invoice.dueDate.toDateString()}.<br><span style="color: red;">Please pay as soon as possible.</span>`;
-
-                        if (invoice.status !== 'overdue') {
-                            invoice.status = 'overdue';
-                            await invoice.save();
-                        }
+                        plainMessage += `Your invoice${invoiceDisplay} from ${senderName} for ${amountDisplay} was due on ${dueDisplay}. Please pay as soon as possible.`;
+                        htmlBody = `Your invoice${invoiceRefHtml} from ${safeSender}<br>for <strong>${safeAmount}</strong> was due on ${dueDisplay}.<br><span style="color: red;">Please pay as soon as possible.</span>`;
                     }
 
                     if (actionLink) {
@@ -690,13 +776,16 @@ exports.checkAndSendReminders = async () => {
                         htmlBody += `<p style="margin: 20px 0;"><a href="${actionLink}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">View & Pay Invoice</a></p>`;
                     } else {
                         plainMessage += `\n\nPlease contact ${senderName} for payment details.`;
-                        htmlBody += `<p>Please contact ${senderName} for payment details.</p>`;
+                        htmlBody += `<p>Please contact ${safeSender} for payment details.</p>`;
                     }
-                    plainMessage += `\n\nThanks,\n${senderName}`;
-                    const htmlMessage = `<p>Hi ${invoice.clientName},</p>\n<p>${htmlBody}</p>\n<p>Thanks,<br>\n${senderName}</p>`;
+                    const footer = emailFooter(invoice);
+                    plainMessage += `\n\nThanks,\n${senderName}${footer.text}`;
+                    const htmlMessage = `<p>Hi ${safeName},</p>\n<p>${htmlBody}</p>\n<p>Thanks,<br>\n${safeSender}</p>${footer.html}`;
+
+                    let sentAny = false;
 
                     // --- Send via Email ---
-                    if (channels.includes('email')) {
+                    if (channels.includes('email') && !optedOut) {
                         console.log(`[InvoiceReminder] Sending ${reminderType} email to ${invoice.clientEmail}`);
                         const emailOptions = { to: invoice.clientEmail, subject, text: plainMessage, html: htmlMessage };
 
@@ -712,6 +801,11 @@ exports.checkAndSendReminders = async () => {
 
                         await sendEmail(emailOptions);
                         await InvoiceReminderLog.create({ invoiceId: invoice._id, type: logType, channel: 'email' });
+                        sentAny = true;
+                    } else if (channels.includes('email') && optedOut) {
+                        // Record the suppression so the window doesn't re-evaluate hourly
+                        await InvoiceReminderLog.create({ invoiceId: invoice._id, type: logType, channel: 'email' });
+                        console.log(`[InvoiceReminder] Skipped ${reminderType} email to ${invoice.clientEmail} (unsubscribed)`);
                     }
 
                     // --- Send via WhatsApp ---
@@ -724,12 +818,14 @@ exports.checkAndSendReminders = async () => {
                                     clientName: invoice.clientName,
                                     invoiceNumber: invoice.invoiceNumber,
                                     amount: invoice.amount,
-                                    dueDate: invoice.dueDate.toDateString(),
+                                    currency: invoice.currency,
+                                    dueDate: dueDisplay,
                                     paymentLink: actionLink,
                                     reminderType
                                 });
                                 if (waResult.success) {
                                     await InvoiceReminderLog.create({ invoiceId: invoice._id, type: logType, channel: 'whatsapp' });
+                                    sentAny = true;
                                 } else {
                                     console.error('[Scheduler] WhatsApp send failed for invoice:', invoice._id, waResult.error);
                                 }
@@ -740,9 +836,11 @@ exports.checkAndSendReminders = async () => {
                     }
 
                     // Update invoice remindersSent
-                    if (!invoice.remindersSent) invoice.remindersSent = [];
-                    invoice.remindersSent.push(new Date());
-                    await invoice.save();
+                    if (sentAny) {
+                        if (!invoice.remindersSent) invoice.remindersSent = [];
+                        invoice.remindersSent.push(new Date());
+                        await invoice.save();
+                    }
                 }
             }
         }
@@ -928,6 +1026,36 @@ exports.updateReminderSchedule = async (req, res) => {
         await settings.save();
 
         res.json({ success: true, data: settings.autoReminders });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: 'Server Error' });
+    }
+};
+
+/**
+ * @desc    Rotate the public portal token (invalidates the old pay link)
+ * @route   POST /api/invoice-reminder/invoices/:id/rotate-portal-token
+ * @access  Private
+ */
+exports.rotatePortalToken = async (req, res) => {
+    try {
+        const invoice = await InvoiceReminder.findById(req.params.id);
+
+        if (!invoice) {
+            return res.status(404).json({ success: false, error: 'Invoice not found' });
+        }
+
+        if (invoice.userId.toString() !== req.user._id.toString()) {
+            return res.status(401).json({ success: false, error: 'Not authorized' });
+        }
+
+        invoice.portalToken = generatePortalToken();
+        await invoice.save();
+
+        res.status(200).json({
+            success: true,
+            data: { portalUrl: `${process.env.FRONTEND_URL}/pay/${invoice.portalToken}` }
+        });
     } catch (err) {
         console.error(err);
         res.status(500).json({ success: false, error: 'Server Error' });

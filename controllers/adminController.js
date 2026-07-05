@@ -427,6 +427,15 @@ exports.updateProcessor = async (req, res, next) => {
     try {
         const { activeProcessor, polar } = req.body;
 
+        // Polar checkout/webhooks are not implemented — switching to it would
+        // break upgrades for every customer. Config can still be saved.
+        if (activeProcessor && activeProcessor !== 'paddle') {
+            return res.status(400).json({
+                success: false,
+                error: `Processor '${activeProcessor}' is not available yet. Only 'paddle' is currently supported.`
+            });
+        }
+
         const update = {};
         if (activeProcessor) update.activeProcessor = activeProcessor;
         if (polar) {

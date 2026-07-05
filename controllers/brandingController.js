@@ -1,14 +1,14 @@
 const InvoiceSettings = require('../models/InvoiceSettings');
 const path = require('path');
-const fs = require('fs');
+const storage = require('../utils/storage');
 
-const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'branding');
-
-function ensureUploadDir() {
-  if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  }
-}
+const LOGO_CONTENT_TYPES = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+};
 
 exports.getBranding = async (req, res) => {
   try {
@@ -53,8 +53,6 @@ exports.updateBranding = async (req, res) => {
 
 exports.uploadLogo = async (req, res) => {
   try {
-    ensureUploadDir();
-
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
@@ -65,15 +63,18 @@ exports.uploadLogo = async (req, res) => {
     }
 
     const ext = path.extname(req.file.originalname).toLowerCase();
-    if (!['.png', '.jpg', '.jpeg', '.svg', '.webp'].includes(ext)) {
+    if (!LOGO_CONTENT_TYPES[ext]) {
       return res.status(400).json({ success: false, error: 'Only PNG, JPG, SVG, or WebP files allowed' });
     }
 
-    const filename = `${req.user.organization}_${position}_${Date.now()}${ext}`;
-    const filepath = path.join(UPLOAD_DIR, filename);
-    fs.writeFileSync(filepath, req.file.buffer);
+    const key = `branding/${req.user.organization}_${position}_${Date.now()}${ext}`;
+    const logoUrl = await storage.uploadBuffer(key, req.file.buffer, LOGO_CONTENT_TYPES[ext]);
 
-    const logoUrl = `/uploads/branding/${filename}`;
+    // Clean up the previous logo for this slot
+    const existing = await InvoiceSettings.findOne({ organization: req.user.organization });
+    if (existing?.logos?.[position]) {
+      await storage.deleteByUrl(existing.logos[position]);
+    }
 
     await InvoiceSettings.findOneAndUpdate(
       { organization: req.user.organization },
@@ -96,8 +97,7 @@ exports.deleteLogo = async (req, res) => {
 
     const settings = await InvoiceSettings.findOne({ organization: req.user.organization });
     if (settings?.logos?.[position]) {
-      const filepath = path.join(__dirname, '..', settings.logos[position]);
-      if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+      await storage.deleteByUrl(settings.logos[position]);
 
       settings.logos[position] = null;
       settings.updatedBy = req.user._id;

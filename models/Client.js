@@ -24,6 +24,9 @@ const ClientSchema = new mongoose.Schema(
       country: String,
     },
     notes: { type: String, maxlength: 2000 },
+    // Recipient opted out of reminder emails via the unsubscribe link
+    emailOptOut: { type: Boolean, default: false },
+    emailOptOutAt: Date,
     tags: [{ type: String, trim: true }],
     totalInvoices: { type: Number, default: 0 },
     totalPaid: { type: Number, default: 0 },

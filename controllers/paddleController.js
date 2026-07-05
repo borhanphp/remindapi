@@ -105,33 +105,36 @@ exports.handleWebhook = async (req, res) => {
 
         const { verifyWebhookSignature } = require('../config/paddle');
         const signature = req.headers['paddle-signature'];
-        const isSandbox = process.env.PADDLE_ENVIRONMENT === 'sandbox';
+        // Never skip verification in production, even if PADDLE_ENVIRONMENT is
+        // misconfigured — a forged webhook could grant free subscriptions.
+        const allowUnverified = process.env.PADDLE_ENVIRONMENT === 'sandbox'
+            && process.env.NODE_ENV !== 'production';
 
         // Verify webhook signature
         if (!signature) {
             console.error('[Paddle Webhook] ⚠️ Missing paddle-signature header');
-            if (!isSandbox) {
+            if (!allowUnverified) {
                 return res.status(401).json({ error: 'Missing signature' });
             }
-            console.warn('[Paddle Webhook] Sandbox: proceeding without signature');
+            console.warn('[Paddle Webhook] Sandbox (non-production): proceeding without signature');
         } else {
             try {
                 const isValid = verifyWebhookSignature(req.rawBody, signature);
                 if (!isValid) {
                     console.error('[Paddle Webhook] ⚠️ Signature mismatch');
-                    if (!isSandbox) {
+                    if (!allowUnverified) {
                         return res.status(401).json({ error: 'Invalid signature' });
                     }
-                    console.warn('[Paddle Webhook] Sandbox: proceeding despite invalid signature');
+                    console.warn('[Paddle Webhook] Sandbox (non-production): proceeding despite invalid signature');
                 } else {
                     console.log('[Paddle Webhook] ✅ Signature verified');
                 }
             } catch (err) {
                 console.error('[Paddle Webhook] Signature error:', err.message);
-                if (!isSandbox) {
+                if (!allowUnverified) {
                     return res.status(401).json({ error: 'Signature verification failed' });
                 }
-                console.warn('[Paddle Webhook] Sandbox: proceeding despite error');
+                console.warn('[Paddle Webhook] Sandbox (non-production): proceeding despite error');
             }
         }
 

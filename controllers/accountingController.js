@@ -251,7 +251,7 @@ exports.syncInvoices = async (req, res) => {
         reminderChannels: ['email']
       });
 
-      reminder.portalToken = generatePortalToken(reminder._id);
+      reminder.portalToken = generatePortalToken();
       await reminder.save();
 
       dispatchWebhook(req.user.organization, 'invoice.created', reminder.toObject()).catch(() => {});

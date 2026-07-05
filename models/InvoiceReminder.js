@@ -82,6 +82,13 @@ const invoiceReminderSchema = new mongoose.Schema({
         default: null,
     },
     stripePaymentIntentId: String,
+    paypalOrderId: String,
+    // Set when the client claims payment from the portal; the owner confirms
+    // via the mark-as-paid endpoint. Claiming does NOT change status.
+    paymentClaim: {
+        claimedAt: Date,
+        note: { type: String, maxlength: 500 },
+    },
     clientId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Client',

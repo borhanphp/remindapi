@@ -127,49 +127,6 @@ exports.protect = async (req, res, next) => {
   }
 };
 
-// Protect customer routes
-exports.protectCustomer = async (req, res, next) => {
-  try {
-    let token;
-
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
-    }
-
-    if (!token) {
-      throw new ApiError(401, 'Not authorized to access this route');
-    }
-
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const Customer = require('../models/Customer');
-      const customer = await Customer.findById(decoded.id);
-
-      if (!customer) {
-        throw new ApiError(401, 'Customer not found');
-      }
-
-      if (customer.status !== 'active') {
-        throw new ApiError(401, 'Customer account is inactive');
-      }
-
-      req.customer = customer;
-      // Also set req.user to allow reuse of some middlewares if they check req.user.organization
-      req.user = {
-        _id: customer._id,
-        organization: customer.organization,
-        role: 'customer'
-      };
-
-      next();
-    } catch (err) {
-      throw new ApiError(401, 'Not authorized to access this route');
-    }
-  } catch (error) {
-    next(error);
-  }
-};
-
 // Authorize access based on permission
 exports.authorize = (permission) => {
   return async (req, res, next) => {

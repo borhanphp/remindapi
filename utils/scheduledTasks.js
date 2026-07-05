@@ -102,7 +102,7 @@ async function backfillPortalTokens() {
   console.log(`[Backfill] Generating portal tokens for ${invoices.length} invoices...`);
   let count = 0;
   for (const inv of invoices) {
-    const token = generatePortalToken(inv._id);
+    const token = generatePortalToken();
     await InvoiceReminder.updateOne({ _id: inv._id }, { $set: { portalToken: token } });
     count++;
   }
@@ -210,15 +210,23 @@ async function checkUsageLimits() {
 
     for (const org of freeOrgs) {
       const usage = await getInvoiceUsage(org._id);
+      const atThreshold = usage.used >= Math.floor(usage.limit * 0.8) && usage.remaining > 0;
 
-      // Send warning at 80% usage
-      if (usage.used >= Math.floor(usage.limit * 0.8) && usage.remaining > 0) {
+      if (atThreshold && !org.subscription.usageWarningSentAt) {
+        // Send once per approach to the limit, not every day
         const owner = await User.findOne({ organization: org._id, isOwner: true });
 
         if (owner) {
           console.log(`[Usage Check] Sending usage warning to ${owner.email} (${usage.used}/${usage.limit})`);
           await subscriptionEmailService.sendUsageLimitWarningEmail(owner, org, usage);
         }
+
+        org.subscription.usageWarningSentAt = new Date();
+        await org.save();
+      } else if (!atThreshold && org.subscription.usageWarningSentAt) {
+        // Usage dropped back below the threshold — re-arm the warning
+        org.subscription.usageWarningSentAt = null;
+        await org.save();
       }
     }
 

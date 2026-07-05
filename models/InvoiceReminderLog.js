@@ -6,9 +6,10 @@ const invoiceReminderLogSchema = new mongoose.Schema({
         ref: 'InvoiceReminder',
         required: true
     },
+    // e.g. 'before_due', 'before_due_7', 'on_due', 'after_due_3', 'manual_reminder'.
+    // Kept free-form so each schedule window dedupes independently.
     type: {
         type: String,
-        enum: ['before_due', 'on_due', 'after_due', 'manual_reminder'],
         required: true
     },
     channel: {

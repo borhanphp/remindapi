@@ -127,7 +127,7 @@ exports.processRecurringReminders = async () => {
                     recurringReminderId: rec._id
                 });
 
-                invoice.portalToken = generatePortalToken(invoice._id);
+                invoice.portalToken = generatePortalToken();
                 await invoice.save();
 
                 rec.lastGenerationDate = new Date();

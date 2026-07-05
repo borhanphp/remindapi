@@ -17,15 +17,19 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20' # Using Node 20 as standard
+          node-version: '20'
           cache: 'npm'
 
       - name: Install Dependencies
-        run: npm install
+        run: npm ci
 
-      # Uncomment if you add testing scripts in the future
-      # - name: Run tests
-      #   run: npm test
+      # Fails fast on syntax errors before anything reaches the server
+      - name: Syntax check
+        run: |
+          node --check server.js
+          for f in controllers/*.js routes/*.js models/*.js middleware/*.js services/*.js utils/*.js config/*.js; do
+            node --check "$f"
+          done
 
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -35,15 +39,15 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
-            # Navigate to the API application folder
-            cd /path/to/your/app/invoice-reminder-api
-            
-            # Pull latest code from the repository
+            set -e
+
+            # DEPLOY_PATH must be set as a repository secret, e.g. /var/www/zeeremind-api
+            cd "${{ secrets.DEPLOY_PATH }}"
+
             git pull origin main
-            
-            # Install production dependencies
-            npm install
-            
-            # Restart the Node.js application (assuming PM2 is used)
-            # Replace 'zeeremind-api' with the actual PM2 process name you have configured
-            pm2 restart zeeremind-api || pm2 start server.js --name "zeeremind-api"
+
+            # Production dependencies only, from the lockfile
+            npm ci --omit=dev
+
+            # Zero-downtime reload; falls back to a fresh start on first deploy
+            pm2 reload zeeremind-api --update-env || pm2 start server.js --name "zeeremind-api"
