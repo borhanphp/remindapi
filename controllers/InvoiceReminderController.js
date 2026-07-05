@@ -4,7 +4,7 @@ const InvoiceSettings = require('../models/InvoiceSettings');
 const Client = require('../models/Client');
 const { generatePortalToken } = require('../utils/portalToken');
 const { dispatch: dispatchWebhook } = require('../services/webhookService');
-const { escapeHtml, formatCurrency, daysSinceDue, formatDateInTz } = require('../utils/format');
+const { escapeHtml, formatCurrency, daysSinceDue, formatDateInTz, reminderEmailFooter } = require('../utils/format');
 const { createInvoiceSchema, updateInvoiceSchema, validate } = require('../utils/invoiceValidation');
 
 const ALLOWED_CHANNELS = ['email', 'whatsapp'];
@@ -22,19 +22,8 @@ async function isEmailOptedOut(organizationId, email) {
     return !!client;
 }
 
-function unsubscribeUrl(invoice) {
-    return invoice.portalToken
-        ? `${process.env.FRONTEND_URL}/unsubscribe/${invoice.portalToken}`
-        : null;
-}
-
 function emailFooter(invoice) {
-    const url = unsubscribeUrl(invoice);
-    if (!url) return { text: '', html: '' };
-    return {
-        text: `\n\n---\nNo longer want payment reminders for these invoices? Unsubscribe: ${url}`,
-        html: `<p style="margin-top:24px;font-size:12px;color:#888;">No longer want payment reminders for these invoices? <a href="${url}" style="color:#888;">Unsubscribe</a></p>`
-    };
+    return reminderEmailFooter(invoice.portalToken);
 }
 
 function normalizeReminderChannels(channels, userPlan = 'free') {

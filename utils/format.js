@@ -82,4 +82,16 @@ function formatDateInTz(date, tz) {
     }).format(new Date(date));
 }
 
-module.exports = { escapeHtml, formatCurrency, safeTimeZone, dateKeyInTz, daysSinceDue, formatDateInTz };
+/**
+ * Standard unsubscribe footer for client-facing reminder/invoice emails.
+ */
+function reminderEmailFooter(portalToken) {
+    if (!portalToken || !process.env.FRONTEND_URL) return { text: '', html: '' };
+    const url = `${process.env.FRONTEND_URL}/unsubscribe/${portalToken}`;
+    return {
+        text: `\n\n---\nNo longer want payment reminders for these invoices? Unsubscribe: ${url}`,
+        html: `<p style="margin-top:24px;font-size:12px;color:#888;">No longer want payment reminders for these invoices? <a href="${url}" style="color:#888;">Unsubscribe</a></p>`
+    };
+}
+
+module.exports = { escapeHtml, formatCurrency, safeTimeZone, dateKeyInTz, daysSinceDue, formatDateInTz, reminderEmailFooter };
