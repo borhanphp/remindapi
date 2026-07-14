@@ -583,6 +583,7 @@ from ${safeSender} for <strong>${escapeHtml(amountDisplay)}</strong>, due ${dueD
                     const waResult = await whatsappService.sendInvoiceReminder({
                         to: invoice.clientPhone,
                         clientName: invoice.clientName,
+                        companyName: senderName,
                         invoiceNumber: invoice.invoiceNumber,
                         amount: invoice.amount,
                         currency: invoice.currency,
@@ -805,6 +806,7 @@ exports.checkAndSendReminders = async () => {
                                 const waResult = await whatsappService.sendInvoiceReminder({
                                     to: invoice.clientPhone,
                                     clientName: invoice.clientName,
+                                    companyName: senderName,
                                     invoiceNumber: invoice.invoiceNumber,
                                     amount: invoice.amount,
                                     currency: invoice.currency,

@@ -64,7 +64,7 @@ async function sendMetaTemplate({ to, templateName, templateParams, language = '
             language: { code: language },
             components: [{
                 type: 'body',
-                parameters: templateParams.map(value => ({
+                parameters: Object.entries(templateParams).map(([, value]) => ({
                     type: 'text',
                     text: String(value)
                 }))
@@ -195,9 +195,10 @@ async function sendWhatsAppTemplate({ to, templateName, templateParams, language
     }
 }
 
-function buildReminderBody({ clientName, invoiceNumber, amount, currency, dueDate, paymentLink, reminderType }) {
+function buildReminderBody({ clientName, companyName, invoiceNumber, amount, currency, dueDate, paymentLink, reminderType }) {
     const ref = invoiceNumber ? ` #${invoiceNumber}` : '';
     const money = formatCurrency(amount, currency);
+    const from = companyName ? `\n\nFrom: ${companyName}` : '';
     const intro = {
         before_due: `Hi ${clientName}, a friendly reminder: invoice${ref} for ${money} is due on ${dueDate}.`,
         on_due: `Hi ${clientName}, invoice${ref} for ${money} is due today (${dueDate}).`,
@@ -206,13 +207,14 @@ function buildReminderBody({ clientName, invoiceNumber, amount, currency, dueDat
     };
     const key = reminderType && reminderType.startsWith('after_due') ? 'after_due' : reminderType;
     let body = intro[key] || intro.manual;
+    body += from;
     body += paymentLink
         ? `\n\nView or pay here: ${paymentLink}`
         : '\n\nPlease contact the sender for payment details.';
     return body;
 }
 
-async function sendInvoiceReminder({ to, clientName, invoiceNumber, amount, currency, dueDate, paymentLink, reminderType }) {
+async function sendInvoiceReminder({ to, clientName, companyName, invoiceNumber, amount, currency, dueDate, paymentLink, reminderType }) {
     const templateMap = {
         before_due: 'invoice_reminder_upcoming',
         on_due: 'invoice_reminder_due_today',
@@ -226,14 +228,15 @@ async function sendInvoiceReminder({ to, clientName, invoiceNumber, amount, curr
     return sendWhatsAppTemplate({
         to,
         templateName,
-        templateParams: [
-            clientName,
-            invoiceNumber || 'N/A',
-            formatCurrency(amount, currency),
-            dueDate,
-            paymentLink || 'Contact sender for details'
-        ],
-        fallbackBody: buildReminderBody({ clientName, invoiceNumber, amount, currency, dueDate, paymentLink, reminderType })
+        templateParams: {
+            client_name: clientName,
+            company_name: companyName || 'N/A',
+            invoice_number: invoiceNumber || 'N/A',
+            amount: formatCurrency(amount, currency),
+            due_date: dueDate,
+            payment_link: paymentLink || 'Contact sender for details'
+        },
+        fallbackBody: buildReminderBody({ clientName, companyName, invoiceNumber, amount, currency, dueDate, paymentLink, reminderType })
     });
 }
 
